@@ -14,6 +14,7 @@
 #include "RenderFlags.h"
 #include "ServiceBroker.h"
 #include "application/Application.h"
+#include "cores/DataCacheCore.h"
 #include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/StereoscopicsManager.h"
@@ -620,6 +621,8 @@ void CRenderManager::Render(bool clear, DWORD flags, DWORD alpha, bool gui)
     if (m_presentsource == -1 || (m_renderState != STATE_CONFIGURED))
       return;
   }
+
+  CServiceBroker::GetDataCacheCore().SetRenderPts(m_Queue[m_presentsource].pts);
 
   if (!gui && m_pRenderer->IsGuiLayer())
     return;
