@@ -131,6 +131,7 @@ public:
   int bitsperpixel;
   int bitdepth;
   StreamHdrType hdrType;
+  StreamHdrType sourceHdrType; // hdr type the container signalled, survives a rewrite of hdrType
   AVColorSpace colorSpace;
   AVColorRange colorRange;
   AVColorPrimaries colorPrimaries;
