@@ -15,6 +15,7 @@
 #include "DVDStreamInfo.h"
 #include "AMLCodec.h"
 #include "ServiceBroker.h"
+#include "cores/DataCacheCore.h"
 #include "utils/AMLUtils.h"
 #include "utils/HDRCapabilities.h"
 #include "utils/log.h"
@@ -107,6 +108,10 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
 
   m_hints = hints;
   m_hints.pClock = hints.pClock;
+
+  // the hdr type as signalled by the container, hdrType itself is already rewritten to
+  // dolbyvision when the vs10 engine tone maps the stream
+  CServiceBroker::GetDataCacheCore().SetVideoSourceHdrType(m_hints.sourceHdrType);
 
   CLog::Log(LOGDEBUG, "{}::{} - codec {:d} profile:{:d} extra_size:{:d} fps:{:d}/{:d}",
     __MODULE_NAME__, __FUNCTION__, m_hints.codec, m_hints.profile, m_hints.extradata.GetSize(), m_hints.fpsrate, m_hints.fpsscale);
@@ -526,6 +531,18 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
 
       m_processInfo.SetDoviIsFEL(doviIsFEL);
       m_processInfo.SetIsHdr10Plus(IsHdr10Plus);
+
+      // hdr10+ sei alongside a dolby vision stream makes it the secondary hdr format,
+      // on its own the container never signalled it so it is the source format
+      if (IsHdr10Plus)
+      {
+        if (m_hints.sourceHdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
+          CServiceBroker::GetDataCacheCore().SetVideoSourceAdditionalHdrType(
+              StreamHdrType::HDR_TYPE_HDR10PLUS);
+        else
+          CServiceBroker::GetDataCacheCore().SetVideoSourceHdrType(
+              StreamHdrType::HDR_TYPE_HDR10PLUS);
+      }
 
       CLog::Log(LOGINFO, "CDVDVideoCodecAmlogic::{}: Open decoder: fps:{:d}/{:d}", __FUNCTION__, m_hints.fpsrate, m_hints.fpsscale);
       if (m_Codec && !m_Codec->OpenDecoder(m_hints, doviIsFEL))
