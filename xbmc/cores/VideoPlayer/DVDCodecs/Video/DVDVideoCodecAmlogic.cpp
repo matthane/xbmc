@@ -297,6 +297,7 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
       m_pFormatName = "am-h265";
       m_bitstream = new CBitstreamConverter();
       m_bitstream->Open(m_hints.codec, m_hints.extradata.GetData(), m_hints.extradata.GetSize(), true);
+      m_bitstream->SetSourceDoviConfig(m_hints.dovi);
 
       // check for hevc-hvcC and convert to h265-annex-b
       if (m_hints.extradata && !m_hints.cryptoSession)

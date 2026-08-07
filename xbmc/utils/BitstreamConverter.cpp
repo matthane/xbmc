@@ -18,6 +18,11 @@
 #include "utils/StringUtils.h"
 #include "HevcSei.h"
 
+#ifdef HAVE_LIBDOVI
+#include "ServiceBroker.h"
+#include "cores/DataCacheCore.h"
+#endif
+
 #include <algorithm>
 
 extern "C"
@@ -582,6 +587,12 @@ void CBitstreamConverter::Close()
   m_convert_bytestream = false;
   m_convert_3byteTo4byteNALSize = false;
   m_combine = false;
+
+#ifdef HAVE_LIBDOVI
+  if (m_cachedDoviRpuData)
+    dovi_data_free(m_cachedDoviRpuData), m_cachedDoviRpuData = NULL;
+  m_cachedDoviRpuInNal.clear();
+#endif
 }
 
 bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
@@ -660,7 +671,7 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
               {
                 const uint8_t *nalu_62_data = buf;
 #ifdef HAVE_LIBDOVI
-                const DoviData* rpu_data = processDoviRpu(buf, size);
+                const DoviData* rpu_data = processDoviRpu(buf, size, pts);
 
                 if (rpu_data)
                 {
@@ -670,11 +681,6 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
 #endif
 
                 BitstreamAllocAndCopy(&m_convertBuffer, &offset, nalu_62_data, size, nal_type);
-
-#ifdef HAVE_LIBDOVI
-                if (rpu_data)
-                  dovi_data_free(rpu_data);
-#endif
               }
               else
               {
@@ -818,8 +824,13 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
   return false;
 }
 
-bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el, int iSize_el, double pts)
+bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el,
+                                  int iSize_el, double pts)
 {
+  // bl and el arrive on separate tracks, which is what this overload exists for; orthogonal to
+  // the el type (FEL/MEL describes the el content, not how it is carried)
+  m_doviIsDualTrack = true;
+
   if (m_convertBuffer)
   {
     av_free(m_convertBuffer);
@@ -891,7 +902,7 @@ bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pDat
       {
         const uint8_t *nalu_62_data = buf;
 #ifdef HAVE_LIBDOVI
-        const DoviData* rpu_data = processDoviRpu(buf, size);
+        const DoviData* rpu_data = processDoviRpu(buf, size, pts);
 
         if (rpu_data)
         {
@@ -901,11 +912,6 @@ bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pDat
 #endif
 
         BitstreamAllocAndCopy(&m_convertBuffer, &offset, nalu_62_data, size, nal_type);
-
-#ifdef HAVE_LIBDOVI
-        if (rpu_data)
-          dovi_data_free(rpu_data);
-#endif
       }
       else
       {
@@ -1329,10 +1335,6 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
   uint32_t cumul_size = 0;
   const uint8_t* buf_end = buf + buf_size;
 
-#ifdef HAVE_LIBDOVI
-  const DoviData* rpu_data = NULL;
-#endif
-
   std::vector<uint8_t> finalPrefixSeiNalu;
 
   switch (m_codec)
@@ -1430,7 +1432,7 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
         {
 #ifdef HAVE_LIBDOVI
           // Convert the RPU itself
-          rpu_data = processDoviRpu(buf, nal_size);
+          const DoviData* rpu_data = processDoviRpu(buf, nal_size, pts);
           if (rpu_data)
           {
             buf_to_write = rpu_data->data;
@@ -1448,14 +1450,6 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
       if (write_buf)
         BitstreamAllocAndCopy(poutbuf, poutbuf_size, NULL, 0, buf_to_write, final_nal_size,
                               unit_type);
-
-#ifdef HAVE_LIBDOVI
-      if (rpu_data)
-      {
-        dovi_data_free(rpu_data);
-        rpu_data = NULL;
-      }
-#endif
 
       if (m_IsHdr10Plus && !finalPrefixSeiNalu.empty())
         finalPrefixSeiNalu.clear();
@@ -2120,18 +2114,84 @@ bool CBitstreamConverter::h264_sequence_header(const uint8_t *data, const uint32
 }
 
 #ifdef HAVE_LIBDOVI
+namespace
+{
+bool DoviConfigPresent(const AVDOVIDecoderConfigurationRecord& dovi)
+{
+  return dovi.dv_version_major || dovi.dv_version_minor || dovi.dv_profile || dovi.dv_level ||
+         dovi.rpu_present_flag || dovi.el_present_flag || dovi.bl_present_flag ||
+         dovi.dv_bl_signal_compatibility_id || dovi.dv_md_compression;
+}
+
+bool CachedDoviRpuMatches(const std::vector<uint8_t>& cached, const uint8_t* buf, uint32_t nalSize)
+{
+  return nalSize != 0 && cached.size() == nalSize && std::equal(cached.begin(), cached.end(), buf);
+}
+
+DOVIELType GetDoviElType(const DoviRpuDataHeader* header)
+{
+  if (!header->el_type || (header->guessed_profile != 4 && header->guessed_profile != 7))
+    return DOVIELType::NONE;
+
+  if (StringUtils::EqualsNoCase(header->el_type, "FEL"))
+    return DOVIELType::FEL;
+
+  if (StringUtils::EqualsNoCase(header->el_type, "MEL"))
+    return DOVIELType::MEL;
+
+  return DOVIELType::NONE;
+}
+
+std::string GetDoviMetaVersion(const DoviVdrDmData* vdrDmData)
+{
+  if (vdrDmData->dm_data.level254)
+  {
+    if (vdrDmData->dm_data.level8.len > 0)
+      return StringUtils::Format("CMv4.0 {}-{} {}-L8",
+        vdrDmData->dm_data.level254->dm_version_index, vdrDmData->dm_data.level254->dm_mode,
+        vdrDmData->dm_data.level8.len);
+
+    return StringUtils::Format("CMv4.0 {}-{}", vdrDmData->dm_data.level254->dm_version_index,
+      vdrDmData->dm_data.level254->dm_mode);
+  }
+
+  if (vdrDmData->dm_data.level1)
+  {
+    if (vdrDmData->dm_data.level2.len > 0)
+      return StringUtils::Format("CMv2.9 {}-L2", vdrDmData->dm_data.level2.len);
+
+    return "CMv2.9";
+  }
+
+  return std::string();
+}
+} // unnamed namespace
+
 // Processes Dolby Vision RPU
 //   - Sets `m_doviIsFEL` flag to true when DV is profile 7 / FEL
 //   - Converts to profile 8.1 if `m_convert_dovi` is enabled
 //   - Sets level 5 metadata to 0 offsets if `m_setDoviZeroLevel5` is enabled
+//   - Publishes the metadata of the resulting output stream to the data cache, keyed by `pts`
 //
-// The returned data must be freed with `dovi_data_free`
+// The returned data is owned by this converter and stays valid until the next call or `Close`
 // May be NULL if no processing was done or if parsing errored
-const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSize)
+const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSize, double pts)
 {
-  // early exit if no processing option is enabled and EL type is alredy tested
-  if (m_doviELTested && !m_convert_dovi && !m_setDoviZeroLevel5)
-    return NULL;
+  CDataCacheCore& dataCache = CServiceBroker::GetDataCacheCore();
+
+  // a cached output only answers for the rewrite settings that produced it
+  if (m_convert_dovi == m_cachedDoviConvert && m_setDoviZeroLevel5 == m_cachedDoviZeroLevel5 &&
+      CachedDoviRpuMatches(m_cachedDoviRpuInNal, buf, nalSize))
+  {
+    m_cachedDoviFrameMetadata.pts = pts;
+    dataCache.SetVideoDoViFrameMetadata(m_cachedDoviFrameMetadata);
+
+    m_doviRpuCacheHits++;
+    CLog::Log(LOGDEBUG, LOGVIDEO, "CBitstreamConverter::processDoviRpu: cache hit, "
+      "parses: {}, cache hits: {}", m_doviRpuParses, m_doviRpuCacheHits);
+
+    return m_cachedDoviRpuData;
+  }
 
   DoviRpuOpaque* rpu = dovi_parse_unspec62_nalu(buf, nalSize);
   const DoviRpuDataHeader* header = dovi_rpu_get_header(rpu);
@@ -2146,17 +2206,18 @@ const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSi
     return rpuData;
   }
 
+  const bool firstFrame = !m_doviELTested;
+  const DOVIELType sourceElType = GetDoviElType(header);
+
   if (!m_doviELTested)
   {
-    if (header->el_type && (header->guessed_profile == 4 || header->guessed_profile == 7))
-    {
-      if (StringUtils::EqualsNoCase(header->el_type, "FEL"))
-        m_doviIsFEL = true;
-    }
+    m_doviIsFEL = (sourceElType == DOVIELType::FEL);
     m_doviELTested = true;
   }
 
-  if (m_convert_dovi && header->guessed_profile == 7)
+  const bool convertToProfile8 = (m_convert_dovi && header->guessed_profile == 7);
+
+  if (convertToProfile8)
   {
     ret = dovi_convert_rpu_with_mode(rpu, 2);
     processed = true;
@@ -2171,8 +2232,104 @@ const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSi
   if (ret == 0 && processed)
     rpuData = dovi_write_unspec62_nalu(rpu);
 
+  // read back after the rewrites so the published metadata describes the output stream
+  const DoviVdrDmData* vdrDmData = dovi_rpu_get_vdr_dm_data(rpu);
+  bool streamMetadataChanged = firstFrame;
+
+  if (vdrDmData)
+  {
+    DOVIFrameMetadata frameMetadata;
+    frameMetadata.pts = pts;
+
+    if (vdrDmData->dm_data.level1)
+    {
+      frameMetadata.level1MinPq = vdrDmData->dm_data.level1->min_pq;
+      frameMetadata.level1MaxPq = vdrDmData->dm_data.level1->max_pq;
+      frameMetadata.level1AvgPq = vdrDmData->dm_data.level1->avg_pq;
+    }
+
+    if (vdrDmData->dm_data.level5)
+    {
+      frameMetadata.hasLevel5Metadata = true;
+      frameMetadata.level5ActiveAreaLeftOffset =
+        vdrDmData->dm_data.level5->active_area_left_offset;
+      frameMetadata.level5ActiveAreaRightOffset =
+        vdrDmData->dm_data.level5->active_area_right_offset;
+      frameMetadata.level5ActiveAreaTopOffset =
+        vdrDmData->dm_data.level5->active_area_top_offset;
+      frameMetadata.level5ActiveAreaBottomOffset =
+        vdrDmData->dm_data.level5->active_area_bottom_offset;
+    }
+
+    m_cachedDoviFrameMetadata = frameMetadata;
+    dataCache.SetVideoDoViFrameMetadata(frameMetadata);
+
+    if (firstFrame)
+    {
+      m_doviStreamMetadata.sourceMinPq = vdrDmData->source_min_pq;
+      m_doviStreamMetadata.sourceMaxPq = vdrDmData->source_max_pq;
+
+      if (vdrDmData->dm_data.level6)
+      {
+        m_doviStreamMetadata.hasLevel6Metadata = true;
+        m_doviStreamMetadata.level6MaxLum =
+          vdrDmData->dm_data.level6->max_display_mastering_luminance;
+        m_doviStreamMetadata.level6MinLum =
+          vdrDmData->dm_data.level6->min_display_mastering_luminance;
+        m_doviStreamMetadata.level6MaxCll = vdrDmData->dm_data.level6->max_content_light_level;
+        m_doviStreamMetadata.level6MaxFall =
+          vdrDmData->dm_data.level6->max_frame_average_light_level;
+      }
+    }
+
+    std::string metaVersion = GetDoviMetaVersion(vdrDmData);
+    if (metaVersion != m_doviStreamMetadata.metaVersion)
+    {
+      m_doviStreamMetadata.metaVersion = std::move(metaVersion);
+      streamMetadataChanged = true;
+    }
+
+    dovi_rpu_free_vdr_dm_data(vdrDmData);
+  }
+
+  if (streamMetadataChanged)
+    dataCache.SetVideoDoViStreamMetadata(m_doviStreamMetadata);
+
+  if (firstFrame)
+  {
+    DOVIStreamInfo sourceStreamInfo;
+    sourceStreamInfo.elType = sourceElType;
+    sourceStreamInfo.hasConfig = DoviConfigPresent(m_sourceDoviConfig);
+    sourceStreamInfo.hasHeader = true;
+    sourceStreamInfo.isDualTrack = m_doviIsDualTrack;
+    sourceStreamInfo.dovi = m_sourceDoviConfig;
+    dataCache.SetVideoSourceDoViStreamInfo(sourceStreamInfo);
+
+    DOVIStreamInfo streamInfo = sourceStreamInfo;
+    if (convertToProfile8 && ret == 0)
+    {
+      streamInfo.elType = DOVIELType::NONE;
+      streamInfo.dovi.dv_profile = 8;
+      streamInfo.dovi.el_present_flag = 0;
+      streamInfo.dovi.dv_bl_signal_compatibility_id = 1;
+    }
+    dataCache.SetVideoDoViStreamInfo(streamInfo);
+  }
+
   dovi_rpu_free_header(header);
   dovi_rpu_free(rpu);
+
+  if (m_cachedDoviRpuData)
+    dovi_data_free(m_cachedDoviRpuData);
+
+  m_cachedDoviRpuData = rpuData;
+  m_cachedDoviRpuInNal.assign(buf, buf + nalSize);
+  m_cachedDoviConvert = m_convert_dovi;
+  m_cachedDoviZeroLevel5 = m_setDoviZeroLevel5;
+
+  m_doviRpuParses++;
+  CLog::Log(LOGDEBUG, LOGVIDEO, "CBitstreamConverter::processDoviRpu: parsed, "
+    "parses: {}, cache hits: {}", m_doviRpuParses, m_doviRpuCacheHits);
 
   return rpuData;
 }

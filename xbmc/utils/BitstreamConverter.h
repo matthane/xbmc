@@ -11,6 +11,7 @@
 #include "cores/FFmpeg.h"
 
 #include <stdint.h>
+#include <vector>
 
 extern "C"
 {
@@ -18,11 +19,16 @@ extern "C"
 #include <libavformat/avformat.h>
 #include <libavfilter/avfilter.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/dovi_meta.h>
 
 #ifdef HAVE_LIBDOVI
 #include <libdovi/rpu_parser.h>
 #endif
 }
+
+#ifdef HAVE_LIBDOVI
+#include "cores/VideoPlayer/DVDStreamInfo.h"
+#endif
 
 typedef struct
 {
@@ -117,6 +123,12 @@ public:
   void SetRemoveDovi(bool value) { m_removeDovi = value; }
   void SetRemoveHdr10Plus(bool value) { m_removeHdr10Plus = value; }
   void SetDoviZeroLevel5(bool value) { m_setDoviZeroLevel5 = value; }
+  // the dovi configuration record as signalled by the container, before any rewrite this
+  // converter applies to the stream
+  void SetSourceDoviConfig(const AVDOVIDecoderConfigurationRecord& dovi)
+  {
+    m_sourceDoviConfig = dovi;
+  }
   bool GetDoviIsFEL() const { return m_doviIsFEL; }
   bool GetIsHdrPlus() const { return m_IsHdr10Plus; }
 
@@ -137,7 +149,11 @@ protected:
   bool BitstreamConvertInitAVC(void* in_extradata, int in_extrasize);
   bool BitstreamConvertInitHEVC(void* in_extradata, int in_extrasize);
   bool BitstreamConvertInitVVC(void* in_extradata, int in_extrasize);
-  bool BitstreamConvert(uint8_t* pData, int iSize, uint8_t** poutbuf, int* poutbuf_size, double pts);
+  bool BitstreamConvert(uint8_t* pData,
+                        int iSize,
+                        uint8_t** poutbuf,
+                        int* poutbuf_size,
+                        double pts);
   static void BitstreamAllocAndCopy(uint8_t** poutbuf,
                                     int* poutbuf_size,
                                     const uint8_t* sps_pps,
@@ -152,7 +168,7 @@ protected:
                                     uint8_t nal_type);
 
 #ifdef HAVE_LIBDOVI
-  const DoviData* processDoviRpu(uint8_t* buf, uint32_t nalSize);
+  const DoviData* processDoviRpu(uint8_t* buf, uint32_t nalSize, double pts);
 #endif
 
   typedef struct omx_bitstream_ctx {
@@ -185,6 +201,21 @@ protected:
   bool m_setDoviZeroLevel5;
   bool m_doviIsFEL{false};
   bool m_doviELTested{false};
+  bool m_doviIsDualTrack{false};
   bool m_IsHdr10Plus{false};
   bool m_Hdr10PlusTested{false};
+  AVDOVIDecoderConfigurationRecord m_sourceDoviConfig{};
+
+#ifdef HAVE_LIBDOVI
+  // owns the rewritten rpu returned by processDoviRpu, kept alive so a repeated input nal can
+  // be answered from the cache without re-parsing
+  const DoviData* m_cachedDoviRpuData{NULL};
+  std::vector<uint8_t> m_cachedDoviRpuInNal;
+  bool m_cachedDoviConvert{false};
+  bool m_cachedDoviZeroLevel5{false};
+  DOVIFrameMetadata m_cachedDoviFrameMetadata{};
+  DOVIStreamMetadata m_doviStreamMetadata{};
+  unsigned int m_doviRpuParses{0};
+  unsigned int m_doviRpuCacheHits{0};
+#endif
 };
