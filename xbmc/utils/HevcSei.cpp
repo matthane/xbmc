@@ -8,6 +8,33 @@
 
 #include "HevcSei.h"
 
+#include "StringUtils.h"
+
+namespace
+{
+struct WellKnownColourVolume
+{
+  const char* name;
+  uint16_t values[8]; // G, B, R, W chromaticity pairs, x then y
+};
+
+// clang-format off
+constexpr WellKnownColourVolume KNOWN_COLOUR_VOLUMES[] =
+{
+  {"BT.709",     {15000, 30000,  7500,  3000, 32000, 16500, 15635, 16450}},
+  {"BT.2020",    { 8500, 39850,  6550,  2300, 35400, 14600, 15635, 16450}},
+  {"DCI P3",     {13250, 34500,  7500,  3000, 34000, 16000, 15700, 17550}},
+  {"Display P3", {13250, 34500,  7500,  3000, 34000, 16000, 15635, 16450}},
+};
+// clang-format on
+
+bool PrimaryMatches(const DisplayPrimary& primary, int x, int y, int lower, int upper)
+{
+  return primary.x >= x - lower && primary.x < x + upper && primary.y >= y - lower &&
+         primary.y < y + upper;
+}
+} // unnamed namespace
+
 void HevcAddStartCodeEmulationPrevention3Byte(std::vector<uint8_t>& buf)
 {
   size_t i = 0;
@@ -44,6 +71,45 @@ void HevcClearStartCodeEmulationPrevention3Byte(const uint8_t* buf,
   {
     out.assign(buf, buf + len);
   }
+}
+
+std::string MasteringDisplayColourVolumeText(const MasteringDisplayColourVolume& mdcv)
+{
+  size_t r = 3;
+  size_t g = 3;
+  size_t b = 3;
+
+  for (size_t c = 0; c < 3; c++)
+  {
+    if (mdcv.displayPrimaries[c].x < 17500 && mdcv.displayPrimaries[c].y < 17500)
+      b = c;
+    else if (mdcv.displayPrimaries[c].y >= mdcv.displayPrimaries[c].x)
+      g = c;
+    else
+      r = c;
+  }
+
+  // order not detectable from the coordinates, fall back to the gbr order they are written in
+  if (r > 2 || g > 2 || b > 2)
+  {
+    g = 0;
+    b = 1;
+    r = 2;
+  }
+
+  for (const WellKnownColourVolume& volume : KNOWN_COLOUR_VOLUMES)
+  {
+    // +/- 0.0005 on the primaries, +/- 0.00005 on the white point
+    if (PrimaryMatches(mdcv.displayPrimaries[g], volume.values[0], volume.values[1], 25, 25) &&
+        PrimaryMatches(mdcv.displayPrimaries[b], volume.values[2], volume.values[3], 25, 25) &&
+        PrimaryMatches(mdcv.displayPrimaries[r], volume.values[4], volume.values[5], 25, 25) &&
+        PrimaryMatches(mdcv.whitePoint, volume.values[6], volume.values[7], 2, 3))
+      return volume.name;
+  }
+
+  return StringUtils::Format("R:{},{} G:{},{} B:{},{} W:{},{}", mdcv.displayPrimaries[r].x,
+    mdcv.displayPrimaries[r].y, mdcv.displayPrimaries[g].x, mdcv.displayPrimaries[g].y,
+    mdcv.displayPrimaries[b].x, mdcv.displayPrimaries[b].y, mdcv.whitePoint.x, mdcv.whitePoint.y);
 }
 
 int CHevcSei::ParseSeiMessage(CBitstreamReader& br, std::vector<CHevcSei>& messages)
@@ -144,6 +210,60 @@ std::optional<const CHevcSei*> CHevcSei::FindHdr10PlusSeiMessage(
         if (application_identifier == 4 && application_version <= 1)
           return &sei;
       }
+    }
+  }
+
+  return {};
+}
+
+std::optional<MasteringDisplayColourVolume> CHevcSei::ExtractMasteringDisplayColourVolume(
+    const std::vector<CHevcSei>& messages, const std::vector<uint8_t>& buf)
+{
+  for (const CHevcSei& sei : messages)
+  {
+    // Mastering Display Colour Volume
+    if (sei.m_payloadType == 137 && sei.m_payloadSize >= 24)
+    {
+      CBitstreamReader br(buf.data() + sei.m_payloadOffset, sei.m_payloadSize);
+
+      MasteringDisplayColourVolume metadata;
+
+      for (DisplayPrimary& primary : metadata.displayPrimaries)
+      {
+        primary.x = br.ReadBits(16);
+        primary.y = br.ReadBits(16);
+      }
+
+      metadata.whitePoint.x = br.ReadBits(16);
+      metadata.whitePoint.y = br.ReadBits(16);
+
+      // max is signalled in 0.0001 cd/m2 units, min is carried through unscaled
+      metadata.maxLuminance = br.ReadBits(32) / 10000;
+      metadata.minLuminance = br.ReadBits(32);
+
+      return metadata;
+    }
+  }
+
+  return {};
+}
+
+std::optional<ContentLightLevel> CHevcSei::ExtractContentLightLevel(
+    const std::vector<CHevcSei>& messages, const std::vector<uint8_t>& buf)
+{
+  for (const CHevcSei& sei : messages)
+  {
+    // Content Light Level Information
+    if (sei.m_payloadType == 144 && sei.m_payloadSize >= 4)
+    {
+      CBitstreamReader br(buf.data() + sei.m_payloadOffset, sei.m_payloadSize);
+
+      ContentLightLevel metadata;
+
+      metadata.maxContentLightLevel = br.ReadBits(16);
+      metadata.maxFrameAverageLightLevel = br.ReadBits(16);
+
+      return metadata;
     }
   }
 
