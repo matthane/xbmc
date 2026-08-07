@@ -15,6 +15,16 @@
 #include <mutex>
 #include <utility>
 
+namespace
+{
+// dovi frame metadata is keyed by pts, a negative pts would be UB in the cast
+// so collapse it to 0
+uint64_t PtsToKey(double pts)
+{
+  return pts > 0.0 ? static_cast<uint64_t>(pts) : 0;
+}
+} // namespace
+
 CDataCacheCore::CDataCacheCore()
   : m_playerVideoInfo{}, m_playerAudioInfo{}, m_contentInfo{}, m_stateInfo{}
 {
@@ -249,6 +259,98 @@ bool CDataCacheCore::IsVideoInterlaced()
   return m_playerVideoInfo.m_isInterlaced;
 }
 
+void CDataCacheCore::SetVideoDoViFrameMetadata(const DOVIFrameMetadata& frameMetadata)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.doviFrameMetadataMap.insert(PtsToKey(frameMetadata.pts), frameMetadata);
+}
+
+DOVIFrameMetadata CDataCacheCore::GetVideoDoViFrameMetadata()
+{
+  // read outside m_videoPlayerSection, GetRenderPts takes m_renderSection
+  const uint64_t renderPts = PtsToKey(GetRenderPts());
+
+  std::unique_lock lock(m_videoPlayerSection);
+
+  const auto it = m_playerVideoInfo.doviFrameMetadataMap.findNearest(renderPts);
+  if (it == m_playerVideoInfo.doviFrameMetadataMap.end())
+    return {};
+
+  return it->second;
+}
+
+void CDataCacheCore::SetVideoDoViStreamMetadata(const DOVIStreamMetadata& streamMetadata)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.doviStreamMetadata = streamMetadata;
+}
+
+DOVIStreamMetadata CDataCacheCore::GetVideoDoViStreamMetadata()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.doviStreamMetadata;
+}
+
+void CDataCacheCore::SetVideoDoViStreamInfo(const DOVIStreamInfo& streamInfo)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.doviStreamInfo = streamInfo;
+}
+
+DOVIStreamInfo CDataCacheCore::GetVideoDoViStreamInfo()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.doviStreamInfo;
+}
+
+void CDataCacheCore::SetVideoSourceDoViStreamInfo(const DOVIStreamInfo& streamInfo)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.sourceDoViStreamInfo = streamInfo;
+}
+
+DOVIStreamInfo CDataCacheCore::GetVideoSourceDoViStreamInfo()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.sourceDoViStreamInfo;
+}
+
+void CDataCacheCore::SetVideoDoViCodecFourCC(std::string codecFourCC)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.doviCodecFourCC = std::move(codecFourCC);
+}
+
+std::string CDataCacheCore::GetVideoDoViCodecFourCC()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.doviCodecFourCC;
+}
+
+void CDataCacheCore::SetVideoHDRStaticMetadataInfo(
+    const HDRStaticMetadataInfo& hdrStaticMetadataInfo)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.hdrStaticMetadataInfo = hdrStaticMetadataInfo;
+}
+
+HDRStaticMetadataInfo CDataCacheCore::GetVideoHDRStaticMetadataInfo()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.hdrStaticMetadataInfo;
+}
+
 // player audio info
 void CDataCacheCore::SetAudioDecoderName(std::string name)
 {
@@ -449,6 +551,20 @@ bool CDataCacheCore::IsRenderClockSync()
   std::unique_lock lock(m_renderSection);
 
   return m_renderInfo.m_isClockSync;
+}
+
+void CDataCacheCore::SetRenderPts(double pts)
+{
+  std::unique_lock lock(m_renderSection);
+
+  m_renderInfo.m_pts = pts;
+}
+
+double CDataCacheCore::GetRenderPts()
+{
+  std::unique_lock lock(m_renderSection);
+
+  return m_renderInfo.m_pts;
 }
 
 // player states

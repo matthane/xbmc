@@ -9,10 +9,13 @@
 #pragma once
 
 #include "EdlEdit.h"
+#include "cores/VideoPlayer/DVDStreamInfo.h"
 #include "threads/CriticalSection.h"
+#include "utils/AgedMap.h"
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -46,6 +49,18 @@ public:
   float GetVideoFps();
   void SetVideoDAR(float dar);
   float GetVideoDAR();
+  void SetVideoDoViFrameMetadata(const DOVIFrameMetadata& frameMetadata);
+  DOVIFrameMetadata GetVideoDoViFrameMetadata();
+  void SetVideoDoViStreamMetadata(const DOVIStreamMetadata& streamMetadata);
+  DOVIStreamMetadata GetVideoDoViStreamMetadata();
+  void SetVideoDoViStreamInfo(const DOVIStreamInfo& streamInfo);
+  DOVIStreamInfo GetVideoDoViStreamInfo();
+  void SetVideoSourceDoViStreamInfo(const DOVIStreamInfo& streamInfo);
+  DOVIStreamInfo GetVideoSourceDoViStreamInfo();
+  void SetVideoDoViCodecFourCC(std::string codecFourCC);
+  std::string GetVideoDoViCodecFourCC();
+  void SetVideoHDRStaticMetadataInfo(const HDRStaticMetadataInfo& hdrStaticMetadataInfo);
+  HDRStaticMetadataInfo GetVideoHDRStaticMetadataInfo();
   void SetVideoLiveBitRate(int bitRate);
   int GetVideoLiveBitRate();
   void SetVideoQueueLevel(int level);
@@ -148,6 +163,8 @@ public:
   // render info
   void SetRenderClockSync(bool enabled);
   bool IsRenderClockSync();
+  void SetRenderPts(double pts);
+  double GetRenderPts();
 
   // player states
   /*!
@@ -242,6 +259,12 @@ protected:
     float fps;
     float dar;
     bool m_isInterlaced;
+    CAgedMap<uint64_t, DOVIFrameMetadata> doviFrameMetadataMap;
+    DOVIStreamMetadata doviStreamMetadata;
+    DOVIStreamInfo doviStreamInfo;
+    DOVIStreamInfo sourceDoViStreamInfo;
+    std::string doviCodecFourCC;
+    HDRStaticMetadataInfo hdrStaticMetadataInfo;
     int liveBitRate;
     int queueLevel;
     int queueDataLevel;
@@ -368,6 +391,7 @@ protected:
   struct SRenderInfo
   {
     bool m_isClockSync;
+    double m_pts{0.0};
   } m_renderInfo{};
 
   mutable CCriticalSection m_stateSection;
