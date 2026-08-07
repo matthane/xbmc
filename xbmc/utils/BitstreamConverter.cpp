@@ -18,10 +18,8 @@
 #include "utils/StringUtils.h"
 #include "HevcSei.h"
 
-#ifdef HAVE_LIBDOVI
 #include "ServiceBroker.h"
 #include "cores/DataCacheCore.h"
-#endif
 
 #include <algorithm>
 
@@ -662,6 +660,9 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
               buf += 4;
               nal_type = (buf[0] >> 1) & 0x3f;
 
+              if (nal_type == HEVC_NAL_SEI_PREFIX)
+                ProcessHdrStaticMetadata(buf, size);
+
               if (nal_type == AVC_NAL_END_SEQUENCE)
               {
                 buf_eos = buf;
@@ -871,6 +872,9 @@ bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pDat
       size = std::min<uint32_t>(AV_RB32(buf), end - buf - 4);
       buf += 4;
       nal_type = (buf[0] >> 1) & 0x3f;
+
+      if (nal_type == HEVC_NAL_SEI_PREFIX)
+        ProcessHdrStaticMetadata(buf, size);
 
       if (nal_type != AVC_NAL_END_SEQUENCE)
         BitstreamAllocAndCopy(&m_convertBuffer, &offset, buf, size, nal_type);
@@ -1317,6 +1321,53 @@ bool CBitstreamConverter::IsSlice(uint8_t unit_type)
   }
 }
 
+// Publishes the HDR10 static metadata carried by a prefix SEI nal to the data cache, whenever
+// the values change. `buf` points at the nal payload, emulation prevention bytes included
+void CBitstreamConverter::ProcessHdrStaticMetadata(const uint8_t* buf, uint32_t nalSize)
+{
+  std::vector<uint8_t> clearBuf;
+  const auto messages = CHevcSei::ParseSeiRbspUnclearedEmulation(buf, nalSize, clearBuf);
+
+  bool updated = false;
+
+  if (const auto mdcv = CHevcSei::ExtractMasteringDisplayColourVolume(messages, clearBuf))
+  {
+    if (!m_hdrStaticMetadataInfo.hasMdcvMetadata ||
+        m_hdrStaticMetadataInfo.maxLum != mdcv->maxLuminance ||
+        m_hdrStaticMetadataInfo.minLum != mdcv->minLuminance)
+    {
+      m_hdrStaticMetadataInfo.hasMdcvMetadata = true;
+      m_hdrStaticMetadataInfo.maxLum = mdcv->maxLuminance;
+      m_hdrStaticMetadataInfo.minLum = mdcv->minLuminance;
+      m_hdrStaticMetadataInfo.colourPrimaries = MasteringDisplayColourVolumeText(*mdcv);
+      updated = true;
+    }
+  }
+
+  if (const auto cll = CHevcSei::ExtractContentLightLevel(messages, clearBuf))
+  {
+    if (!m_hdrStaticMetadataInfo.hasCllMetadata ||
+        m_hdrStaticMetadataInfo.maxCll != cll->maxContentLightLevel ||
+        m_hdrStaticMetadataInfo.maxFall != cll->maxFrameAverageLightLevel)
+    {
+      m_hdrStaticMetadataInfo.hasCllMetadata = true;
+      m_hdrStaticMetadataInfo.maxCll = cll->maxContentLightLevel;
+      m_hdrStaticMetadataInfo.maxFall = cll->maxFrameAverageLightLevel;
+      updated = true;
+    }
+  }
+
+  if (!updated)
+    return;
+
+  CServiceBroker::GetDataCacheCore().SetVideoHDRStaticMetadataInfo(m_hdrStaticMetadataInfo);
+
+  CLog::Log(LOGINFO, "CBitstreamConverter::{}: mdcv max lum: {}, min lum: {}, primaries: {}, "
+    "cll max: {}, fall max: {}", __FUNCTION__, m_hdrStaticMetadataInfo.maxLum,
+    m_hdrStaticMetadataInfo.minLum, m_hdrStaticMetadataInfo.colourPrimaries,
+    m_hdrStaticMetadataInfo.maxCll, m_hdrStaticMetadataInfo.maxFall);
+}
+
 bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
                                            int iSize,
                                            uint8_t** poutbuf,
@@ -1407,6 +1458,8 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
       // Try removing HDR10+ only if the NAL is big enough, optimization
       if (unit_type == HEVC_NAL_SEI_PREFIX && nal_size >= 7)
       {
+        ProcessHdrStaticMetadata(buf, nal_size);
+
         if (!m_Hdr10PlusTested && !m_removeHdr10Plus && !m_IsHdr10Plus)
           m_IsHdr10Plus = CHevcSei::ContainsHdr10Plus(buf, nal_size);
 

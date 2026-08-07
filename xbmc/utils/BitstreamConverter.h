@@ -26,9 +26,7 @@ extern "C"
 #endif
 }
 
-#ifdef HAVE_LIBDOVI
 #include "cores/VideoPlayer/DVDStreamInfo.h"
-#endif
 
 typedef struct
 {
@@ -167,6 +165,8 @@ protected:
                                     uint32_t in_size,
                                     uint8_t nal_type);
 
+  void ProcessHdrStaticMetadata(const uint8_t* buf, uint32_t nalSize);
+
 #ifdef HAVE_LIBDOVI
   const DoviData* processDoviRpu(uint8_t* buf, uint32_t nalSize, double pts);
 #endif
@@ -205,6 +205,7 @@ protected:
   bool m_IsHdr10Plus{false};
   bool m_Hdr10PlusTested{false};
   AVDOVIDecoderConfigurationRecord m_sourceDoviConfig{};
+  HDRStaticMetadataInfo m_hdrStaticMetadataInfo{};
 
 #ifdef HAVE_LIBDOVI
   // owns the rewritten rpu returned by processDoviRpu, kept alive so a repeated input nal can
