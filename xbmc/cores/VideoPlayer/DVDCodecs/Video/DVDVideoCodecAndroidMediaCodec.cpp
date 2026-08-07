@@ -1056,7 +1056,7 @@ bool CDVDVideoCodecAndroidMediaCodec::AddData(const DemuxPacket &packet)
       // we have an input buffer, fill it.
       if (pData && m_bitstream)
       {
-        m_bitstream->Convert(pData, iSize);
+        m_bitstream->Convert(pData, iSize, pts);
 
         if (m_state == MEDIACODEC_STATE_FLUSHED && !m_bitstream->CanStartDecode())
         {

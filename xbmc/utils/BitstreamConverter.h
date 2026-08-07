@@ -104,8 +104,8 @@ public:
   bool Open(enum AVCodecID codec, uint8_t* in_extradata, int in_extrasize, bool to_annexb);
   void Close();
   bool NeedConvert() const { return m_convert_bitstream; }
-  bool Convert(uint8_t* pData, int iSize);
-  bool Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el, int iSize_el);
+  bool Convert(uint8_t* pData, int iSize, double pts);
+  bool Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el, int iSize_el, double pts);
   uint8_t* GetConvertBuffer() const;
   int GetConvertSize() const;
   uint8_t* GetExtraData();
@@ -137,7 +137,7 @@ protected:
   bool BitstreamConvertInitAVC(void* in_extradata, int in_extrasize);
   bool BitstreamConvertInitHEVC(void* in_extradata, int in_extrasize);
   bool BitstreamConvertInitVVC(void* in_extradata, int in_extrasize);
-  bool BitstreamConvert(uint8_t* pData, int iSize, uint8_t** poutbuf, int* poutbuf_size);
+  bool BitstreamConvert(uint8_t* pData, int iSize, uint8_t** poutbuf, int* poutbuf_size, double pts);
   static void BitstreamAllocAndCopy(uint8_t** poutbuf,
                                     int* poutbuf_size,
                                     const uint8_t* sps_pps,

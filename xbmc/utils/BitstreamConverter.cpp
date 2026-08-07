@@ -584,7 +584,7 @@ void CBitstreamConverter::Close()
   m_combine = false;
 }
 
-bool CBitstreamConverter::Convert(uint8_t* pData, int iSize)
+bool CBitstreamConverter::Convert(uint8_t* pData, int iSize, double pts)
 {
   if (m_convertBuffer)
   {
@@ -610,7 +610,7 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize)
           int bytestream_size = 0;
           uint8_t* bytestream_buff = NULL;
 
-          BitstreamConvert(demuxer_content, demuxer_bytes, &bytestream_buff, &bytestream_size);
+          BitstreamConvert(demuxer_content, demuxer_bytes, &bytestream_buff, &bytestream_size, pts);
           if (bytestream_buff && (bytestream_size > 0))
           {
             m_convertSize = bytestream_size;
@@ -818,7 +818,7 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize)
   return false;
 }
 
-bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el, int iSize_el)
+bool CBitstreamConverter::Convert(uint8_t *pData_bl, int iSize_bl, uint8_t *pData_el, int iSize_el, double pts)
 {
   if (m_convertBuffer)
   {
@@ -1314,7 +1314,8 @@ bool CBitstreamConverter::IsSlice(uint8_t unit_type)
 bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
                                            int iSize,
                                            uint8_t** poutbuf,
-                                           int* poutbuf_size)
+                                           int* poutbuf_size,
+                                           double pts)
 {
   // based on h264_mp4toannexb_bsf.c (ffmpeg)
   // which is Copyright (c) 2007 Benoit Fouet <benoit.fouet@free.fr>

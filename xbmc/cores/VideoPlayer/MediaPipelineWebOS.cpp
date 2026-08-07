@@ -1153,7 +1153,7 @@ bool CMediaPipelineWebOS::FeedVideoData(const std::shared_ptr<CDVDMsg>& msg)
   {
     if (packet->iStreamId != CONVERTED_STREAM_ID)
     {
-      m_bitstream->Convert(data, static_cast<int>(size));
+      m_bitstream->Convert(data, static_cast<int>(size), packet->pts);
       // change the stream id here so we do not convert again if the packet is put back
       packet->iStreamId = CONVERTED_STREAM_ID;
     }

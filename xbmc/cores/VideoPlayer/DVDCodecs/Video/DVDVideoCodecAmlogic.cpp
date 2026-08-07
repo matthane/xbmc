@@ -465,13 +465,15 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
             {
               CLog::Log(LOGDEBUG, LOGVIDEO, "CDVDVideoCodecAmlogic::{}: found EL package with dts: {:.3f}, pts: {:.3f} and size {} in list", __FUNCTION__,
                 packet.dts/DVD_TIME_BASE, packet.pts/DVD_TIME_BASE, iSizeBackup);
-              dual_layer_converted = m_bitstream->Convert(pData, iSize, pDataBackup, iSizeBackup);
+              dual_layer_converted = m_bitstream->Convert(pData, iSize, pDataBackup, iSizeBackup,
+                packet.pts);
             }
             else
             {
               CLog::Log(LOGDEBUG, LOGVIDEO, "CDVDVideoCodecAmlogic::{}: found BL package with dts: {:.3f}, pts: {:.3f} and size {} in list", __FUNCTION__,
                 packet.dts/DVD_TIME_BASE, packet.pts/DVD_TIME_BASE, iSizeBackup);
-              dual_layer_converted = m_bitstream->Convert(pDataBackup, iSizeBackup, pData, iSize);
+              dual_layer_converted = m_bitstream->Convert(pDataBackup, iSizeBackup, pData, iSize,
+                packet.pts);
             }
           }
         }
@@ -490,7 +492,7 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
       }
       else
       {
-        if (!m_bitstream->Convert(pData, iSize))
+        if (!m_bitstream->Convert(pData, iSize, packet.pts))
           return true;
       }
 
