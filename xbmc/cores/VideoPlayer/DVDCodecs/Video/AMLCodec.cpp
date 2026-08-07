@@ -10,6 +10,7 @@
 #include "AMLCodec.h"
 #include "DynamicDll.h"
 
+#include "cores/DataCacheCore.h"
 #include "cores/VideoPlayer/Interface/TimingConstants.h"
 #include "cores/VideoPlayer/Process/ProcessInfo.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFlags.h"
@@ -1963,6 +1964,35 @@ int CAMLCodec::GetAmlDuration() const
   return am_private ? (am_private->video_rate * PTS_FREQ) / UNIT_FREQ : 0;
 };
 
+namespace
+{
+std::string GetDoViCodecFourCC(unsigned int codec_tag)
+{
+  if (codec_tag == 0)
+    return "----";
+
+  std::string fourCC(reinterpret_cast<const char*>(&codec_tag), 4);
+  StringUtils::ToLower(fourCC);
+
+  // some files carry Dolby Vision side data without the matching dv* tag; mapping per
+  // "Dolby Vision Streams Within the HTTP Live Streaming Format" v2.0, page 10, table 2
+  if (fourCC == "hev1")
+    return "dvhe";
+  if (fourCC == "hvc1")
+    return "dvh1";
+  if (fourCC == "avc3")
+    return "dvav";
+  if (fourCC == "avc1")
+    return "dva1";
+  if (fourCC == "vvc1")
+    return "dvc1";
+  if (fourCC == "vvi1")
+    return "dvi1";
+
+  return fourCC;
+}
+} // unnamed namespace
+
 bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
 {
   m_speed = DVD_PLAYSPEED_NORMAL;
@@ -2104,10 +2134,14 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
     CLog::Log(LOGDEBUG, "CAMLCodec::OpenDecoder hdr type: {}", hdrType);
 
   if (hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION)
+  {
     CLog::Log(LOGINFO, "CAMLCodec::OpenDecoder DOVI: version {:d}.{:d}, profile {:d}{}",
       hints.dovi.dv_version_major, hints.dovi.dv_version_minor, hints.dovi.dv_profile,
       (hints.dovi.dv_profile == 4 || hints.dovi.dv_profile == 7) ?
       (doviIsFEL ? ", full enhancement layer" : ", minimum enhancement layer") : "");
+
+    CServiceBroker::GetDataCacheCore().SetVideoDoViCodecFourCC(GetDoViCodecFourCC(hints.codec_tag));
+  }
 
   m_processInfo.SetVideoDAR(hints.aspect);
   CLog::Log(LOGDEBUG, "CAMLCodec::OpenDecoder decoder timeout: {:d}s",
