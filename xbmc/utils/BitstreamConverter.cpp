@@ -1460,7 +1460,7 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
       {
         ProcessHdrStaticMetadata(buf, nal_size);
 
-        if (!m_Hdr10PlusTested && !m_removeHdr10Plus && !m_IsHdr10Plus)
+        if (!m_Hdr10PlusTested && !m_IsHdr10Plus)
           m_IsHdr10Plus = CHevcSei::ContainsHdr10Plus(buf, nal_size);
 
         if (m_removeHdr10Plus)
