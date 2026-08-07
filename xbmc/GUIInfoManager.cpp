@@ -1240,11 +1240,538 @@ constexpr std::array<InfoMap, 10> player_times = {{
 ///     @skinning_v22 **[New Infolabel]** \link Player_Process_subtitledecoder `Player.Process(subtitledecoder)`\endlink
 ///     <p>
 ///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.type)`</b>,
+///                  \anchor Player_Process_hdr_type
+///                  _string_,
+///     @return The hdr format the video decoder was opened with. One of hdr10\, hdr10plus\, hlg\,
+///             dolbyvision\, or empty for sdr. A stream the Dolby Vision VS10 engine tone maps
+///             reads dolbyvision whatever the source was\, so compare against
+///             \link Player_Process_source_hdr_type `Player.Process(video.source.hdr.type)`\endlink
+///             to tell that apart from a stream that carries Dolby Vision itself.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_type `Player.Process(video.hdr.type)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.type.raw)`</b>,
+///                  \anchor Player_Process_hdr_type_raw
+///                  _string_,
+///     @return The raw numeric value behind \link Player_Process_hdr_type
+///             `Player.Process(video.hdr.type)`\endlink.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_type_raw `Player.Process(video.hdr.type.raw)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.hdr.type)`</b>,
+///                  \anchor Player_Process_source_hdr_type
+///                  _string_,
+///     @return The hdr format the stream carries before the player rewrites it: the format
+///             signalled by the container\, or hdr10plus when hdr10+ metadata is found in the
+///             stream itself. Unaffected by the Dolby Vision VS10 engine\, which only changes
+///             \link Player_Process_hdr_type `Player.Process(video.hdr.type)`\endlink.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_hdr_type `Player.Process(video.source.hdr.type)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.hdr.type.raw)`</b>,
+///                  \anchor Player_Process_source_hdr_type_raw
+///                  _string_,
+///     @return The raw numeric value behind \link Player_Process_source_hdr_type
+///             `Player.Process(video.source.hdr.type)`\endlink.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_hdr_type_raw `Player.Process(video.source.hdr.type.raw)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.additional.hdr.type)`</b>,
+///                  \anchor Player_Process_source_additional_hdr_type
+///                  _string_,
+///     @return The secondary hdr format the stream carries\, for example hdr10plus sei found
+///             alongside Dolby Vision. Empty when the stream carries a single hdr format.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_additional_hdr_type `Player.Process(video.source.additional.hdr.type)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.additional.hdr.type.raw)`</b>,
+///                  \anchor Player_Process_source_additional_hdr_type_raw
+///                  _string_,
+///     @return The raw numeric value behind \link Player_Process_source_additional_hdr_type
+///             `Player.Process(video.source.additional.hdr.type)`\endlink.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_additional_hdr_type_raw `Player.Process(video.source.additional.hdr.type.raw)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.has.cll)`</b>,
+///                  \anchor Player_Process_hdr_has_cll
+///                  _string_,
+///     @return **1** when the stream carried a content light level sei message\, otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_has_cll `Player.Process(video.hdr.has.cll)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.max.cll)`</b>,
+///                  \anchor Player_Process_hdr_max_cll
+///                  _string_,
+///     @return The maximum content light level of the stream in nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_max_cll `Player.Process(video.hdr.max.cll)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.max.fall)`</b>,
+///                  \anchor Player_Process_hdr_max_fall
+///                  _string_,
+///     @return The maximum frame average light level of the stream in nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_max_fall `Player.Process(video.hdr.max.fall)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.has.mdcv)`</b>,
+///                  \anchor Player_Process_hdr_has_mdcv
+///                  _string_,
+///     @return **1** when the stream carried a mastering display colour volume sei message\,
+///             otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_has_mdcv `Player.Process(video.hdr.has.mdcv)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.min.lum)`</b>,
+///                  \anchor Player_Process_hdr_min_lum
+///                  _string_,
+///     @return The minimum luminance of the mastering display in nits\, to four decimal places.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_min_lum `Player.Process(video.hdr.min.lum)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.max.lum)`</b>,
+///                  \anchor Player_Process_hdr_max_lum
+///                  _string_,
+///     @return The maximum luminance of the mastering display in nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_max_lum `Player.Process(video.hdr.max.lum)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.hdr.colour.primaries)`</b>,
+///                  \anchor Player_Process_hdr_colour_primaries
+///                  _string_,
+///     @return The colour volume of the mastering display\, named when the primaries match a well
+///             known volume (ex. BT.2020) and otherwise given as the raw primary and white point
+///             coordinates.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_hdr_colour_primaries `Player.Process(video.hdr.colour.primaries)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.has.config)`</b>,
+///                  \anchor Player_Process_dovi_has_config
+///                  _string_,
+///     @return **1** when the stream carries a Dolby Vision configuration record\, otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_has_config `Player.Process(video.dovi.has.config)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.has.header)`</b>,
+///                  \anchor Player_Process_dovi_has_header
+///                  _string_,
+///     @return **1** once an rpu has been parsed for the playing stream\, otherwise **0**. The
+///             stream and frame level dovi infolabels read their defaults until this turns 1. The
+///             codec fourcc and codec string come from the container and do not wait for it.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_has_header `Player.Process(video.dovi.has.header)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.version.major)`</b>,
+///                  \anchor Player_Process_dovi_version_major
+///                  _string_,
+///     @return The Dolby Vision major version of the stream as it is handed to the decoder.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_version_major `Player.Process(video.dovi.version.major)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.version.minor)`</b>,
+///                  \anchor Player_Process_dovi_version_minor
+///                  _string_,
+///     @return The Dolby Vision minor version of the stream as it is handed to the decoder.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_version_minor `Player.Process(video.dovi.version.minor)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.profile)`</b>,
+///                  \anchor Player_Process_dovi_profile
+///                  _string_,
+///     @return The Dolby Vision profile of the stream as it is handed to the decoder. Reads 8 for a
+///             profile 7 stream the player converted.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_profile `Player.Process(video.dovi.profile)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.level)`</b>,
+///                  \anchor Player_Process_dovi_level
+///                  _string_,
+///     @return The Dolby Vision level of the stream as it is handed to the decoder.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_level `Player.Process(video.dovi.level)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.rpu.present)`</b>,
+///                  \anchor Player_Process_dovi_rpu_present
+///                  _string_,
+///     @return **1** when the stream as handed to the decoder carries an rpu\, otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_rpu_present `Player.Process(video.dovi.rpu.present)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.el.present)`</b>,
+///                  \anchor Player_Process_dovi_el_present
+///                  _string_,
+///     @return **1** when the stream as handed to the decoder carries an enhancement layer\,
+///             otherwise **0**. Reads 0 for a profile 7 stream the player converted.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_el_present `Player.Process(video.dovi.el.present)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.bl.present)`</b>,
+///                  \anchor Player_Process_dovi_bl_present
+///                  _string_,
+///     @return **1** when the stream as handed to the decoder carries a base layer\, otherwise
+///             **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_bl_present `Player.Process(video.dovi.bl.present)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.bl.signal.compatibility)`</b>,
+///                  \anchor Player_Process_dovi_bl_signal_compatibility
+///                  _string_,
+///     @return The base layer signal compatibility id of the stream as it is handed to the decoder:
+///             0 none\, 1 hdr10\, 2 sdr\, 4 hlg.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_bl_signal_compatibility `Player.Process(video.dovi.bl.signal.compatibility)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.el.type)`</b>,
+///                  \anchor Player_Process_dovi_el_type
+///                  _string_,
+///     @return The enhancement layer type of the stream as it is handed to the decoder: NONE\, MEL
+///             for a minimum enhancement layer or FEL for a full enhancement layer. Reads NONE for
+///             a profile 7 stream the player converted.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_el_type `Player.Process(video.dovi.el.type)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.dual.track)`</b>,
+///                  \anchor Player_Process_dovi_dual_track
+///                  _string_,
+///     @return How the enhancement layer is packaged: DT-DL when base and enhancement layer arrive
+///             on separate tracks\, ST-DL when the enhancement layer travels inside the base layer
+///             track\, empty when there is no enhancement layer.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_dual_track `Player.Process(video.dovi.dual.track)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.codec.fourcc)`</b>,
+///                  \anchor Player_Process_dovi_codec_fourcc
+///                  _string_,
+///     @return The codec fourcc of the Dolby Vision stream (ex. dvhe). Empty when the container did
+///             not signal Dolby Vision.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_codec_fourcc `Player.Process(video.dovi.codec.fourcc)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.codec.string)`</b>,
+///                  \anchor Player_Process_dovi_codec_string
+///                  _string_,
+///     @return The Dolby Vision codec string of the stream\, its fourcc\, profile and level (ex.
+///             dvhe.08.06). Reads .00.00 when the container did not signal Dolby Vision.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_codec_string `Player.Process(video.dovi.codec.string)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.meta.version)`</b>,
+///                  \anchor Player_Process_dovi_meta_version
+///                  _string_,
+///     @return The Dolby Vision content mapping version carried by the rpu (ex. CMv2.9 or CMv4.0
+///             1-0). Follows the stream when it changes during playback.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_meta_version `Player.Process(video.dovi.meta.version)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.dovi.profile)`</b>,
+///                  \anchor Player_Process_source_dovi_profile
+///                  _string_,
+///     @return The Dolby Vision profile the stream carried before the player converted it.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_dovi_profile `Player.Process(video.source.dovi.profile)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.dovi.el.present)`</b>,
+///                  \anchor Player_Process_source_dovi_el_present
+///                  _string_,
+///     @return **1** when the stream carried an enhancement layer before the player converted it\,
+///             otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_dovi_el_present `Player.Process(video.source.dovi.el.present)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.dovi.el.type)`</b>,
+///                  \anchor Player_Process_source_dovi_el_type
+///                  _string_,
+///     @return The enhancement layer type the stream carried before the player converted it: NONE\,
+///             MEL or FEL. This is the only place the original enhancement layer type survives a
+///             profile 7 to profile 8 conversion.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_dovi_el_type `Player.Process(video.source.dovi.el.type)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.source.dovi.bl.signal.compatibility)`</b>,
+///                  \anchor Player_Process_source_dovi_bl_signal_compatibility
+///                  _string_,
+///     @return The base layer signal compatibility id the stream carried before the player
+///             converted it.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_source_dovi_bl_signal_compatibility `Player.Process(video.source.dovi.bl.signal.compatibility)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.source.min.pq)`</b>,
+///                  \anchor Player_Process_dovi_source_min_pq
+///                  _string_,
+///     @return The minimum mastering luminance of the source display as a 12 bit pq code\, from the
+///             rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_source_min_pq `Player.Process(video.dovi.source.min.pq)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.source.max.pq)`</b>,
+///                  \anchor Player_Process_dovi_source_max_pq
+///                  _string_,
+///     @return The maximum mastering luminance of the source display as a 12 bit pq code\, from the
+///             rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_source_max_pq `Player.Process(video.dovi.source.max.pq)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.source.min.nits)`</b>,
+///                  \anchor Player_Process_dovi_source_min_nits
+///                  _string_,
+///     @return \link Player_Process_dovi_source_min_pq
+///             `Player.Process(video.dovi.source.min.pq)`\endlink in nits\, to four decimal places.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_source_min_nits `Player.Process(video.dovi.source.min.nits)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.source.max.nits)`</b>,
+///                  \anchor Player_Process_dovi_source_max_nits
+///                  _string_,
+///     @return \link Player_Process_dovi_source_max_pq
+///             `Player.Process(video.dovi.source.max.pq)`\endlink in whole nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_source_max_nits `Player.Process(video.dovi.source.max.nits)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.has.l6)`</b>,
+///                  \anchor Player_Process_dovi_has_l6
+///                  _string_,
+///     @return **1** when the rpu carried level 6 metadata\, otherwise **0**.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_has_l6 `Player.Process(video.dovi.has.l6)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l6.max.cll)`</b>,
+///                  \anchor Player_Process_dovi_l6_max_cll
+///                  _string_,
+///     @return The maximum content light level in nits from the level 6 metadata of the rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l6_max_cll `Player.Process(video.dovi.l6.max.cll)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l6.max.fall)`</b>,
+///                  \anchor Player_Process_dovi_l6_max_fall
+///                  _string_,
+///     @return The maximum frame average light level in nits from the level 6 metadata of the rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l6_max_fall `Player.Process(video.dovi.l6.max.fall)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l6.min.lum)`</b>,
+///                  \anchor Player_Process_dovi_l6_min_lum
+///                  _string_,
+///     @return The minimum mastering display luminance in nits from the level 6 metadata of the
+///             rpu\, to four decimal places.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l6_min_lum `Player.Process(video.dovi.l6.min.lum)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l6.max.lum)`</b>,
+///                  \anchor Player_Process_dovi_l6_max_lum
+///                  _string_,
+///     @return The maximum mastering display luminance in nits from the level 6 metadata of the
+///             rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l6_max_lum `Player.Process(video.dovi.l6.max.lum)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.min.pq)`</b>,
+///                  \anchor Player_Process_dovi_l1_min_pq
+///                  _string_,
+///     @return The minimum luminance of the frame on screen as a 12 bit pq code\, from the level 1
+///             metadata of its rpu. Holds its value while playback is paused\, and resolves to the
+///             parsed frame nearest the render timestamp when none carries it exactly.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_min_pq `Player.Process(video.dovi.l1.min.pq)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.max.pq)`</b>,
+///                  \anchor Player_Process_dovi_l1_max_pq
+///                  _string_,
+///     @return The maximum luminance of the frame on screen as a 12 bit pq code\, from the level 1
+///             metadata of its rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_max_pq `Player.Process(video.dovi.l1.max.pq)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.avg.pq)`</b>,
+///                  \anchor Player_Process_dovi_l1_avg_pq
+///                  _string_,
+///     @return The average luminance of the frame on screen as a 12 bit pq code\, from the level 1
+///             metadata of its rpu.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_avg_pq `Player.Process(video.dovi.l1.avg.pq)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.min.nits)`</b>,
+///                  \anchor Player_Process_dovi_l1_min_nits
+///                  _string_,
+///     @return \link Player_Process_dovi_l1_min_pq `Player.Process(video.dovi.l1.min.pq)`\endlink
+///             in nits\, to four decimal places.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_min_nits `Player.Process(video.dovi.l1.min.nits)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.max.nits)`</b>,
+///                  \anchor Player_Process_dovi_l1_max_nits
+///                  _string_,
+///     @return \link Player_Process_dovi_l1_max_pq `Player.Process(video.dovi.l1.max.pq)`\endlink
+///             in whole nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_max_nits `Player.Process(video.dovi.l1.max.nits)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l1.avg.nits)`</b>,
+///                  \anchor Player_Process_dovi_l1_avg_nits
+///                  _string_,
+///     @return \link Player_Process_dovi_l1_avg_pq `Player.Process(video.dovi.l1.avg.pq)`\endlink
+///             in whole nits.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l1_avg_nits `Player.Process(video.dovi.l1.avg.nits)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.has.l5)`</b>,
+///                  \anchor Player_Process_dovi_has_l5
+///                  _string_,
+///     @return **1** when the rpu of the frame on screen carried level 5 metadata\, otherwise
+///             **0**. Resolves to the parsed frame nearest the render timestamp when none carries
+///             it exactly.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_has_l5 `Player.Process(video.dovi.has.l5)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l5.left.offset)`</b>,
+///                  \anchor Player_Process_dovi_l5_left_offset
+///                  _string_,
+///     @return The left active area offset in pixels from the level 5 metadata of the frame on
+///             screen\, or of the parsed frame nearest the render timestamp when none carries it
+///             exactly. Reads 0 without level 5 metadata.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l5_left_offset `Player.Process(video.dovi.l5.left.offset)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l5.right.offset)`</b>,
+///                  \anchor Player_Process_dovi_l5_right_offset
+///                  _string_,
+///     @return The right active area offset in pixels from the level 5 metadata of the frame on
+///             screen\, or of the parsed frame nearest the render timestamp when none carries it
+///             exactly. Reads 0 without level 5 metadata.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l5_right_offset `Player.Process(video.dovi.l5.right.offset)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l5.top.offset)`</b>,
+///                  \anchor Player_Process_dovi_l5_top_offset
+///                  _string_,
+///     @return The top active area offset in pixels from the level 5 metadata of the frame on
+///             screen\, or of the parsed frame nearest the render timestamp when none carries it
+///             exactly. Reads 0 without level 5 metadata.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l5_top_offset `Player.Process(video.dovi.l5.top.offset)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.dovi.l5.bottom.offset)`</b>,
+///                  \anchor Player_Process_dovi_l5_bottom_offset
+///                  _string_,
+///     @return The bottom active area offset in pixels from the level 5 metadata of the frame on
+///             screen\, or of the parsed frame nearest the render timestamp when none carries it
+///             exactly. Reads 0 without level 5 metadata.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_dovi_l5_bottom_offset `Player.Process(video.dovi.l5.bottom.offset)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(render.pts)`</b>,
+///                  \anchor Player_Process_render_pts
+///                  _string_,
+///     @return The presentation timestamp of the video frame on screen in the units of the player
+///             clock. The per frame Dolby Vision infolabels are looked up with this timestamp.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_render_pts `Player.Process(render.pts)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.bit.depth)`</b>,
+///                  \anchor Player_Process_bit_depth
+///                  _string_,
+///     @return The bit depth of the video stream as it is handed to the decoder.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_bit_depth `Player.Process(video.bit.depth)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.color.space)`</b>,
+///                  \anchor Player_Process_color_space
+///                  _string_,
+///     @return The colour space of the video stream in FFmpeg naming (ex. bt2020nc)\, or unknown
+///             when the stream does not signal one. Dolby Vision Profile 5 signals nothing here by
+///             design (its IPT-PQ-C2 colour volume has no VUI code)\, so this and the other three
+///             colour labels read unknown for it and
+///             \link Player_Process_dovi_profile `Player.Process(video.dovi.profile)`\endlink is
+///             the authoritative answer instead.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_color_space `Player.Process(video.color.space)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.color.range)`</b>,
+///                  \anchor Player_Process_color_range
+///                  _string_,
+///     @return The colour range of the video stream in FFmpeg naming: tv for limited range\, pc for
+///             full range\, or unknown when the stream does not signal one.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_color_range `Player.Process(video.color.range)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.color.primaries)`</b>,
+///                  \anchor Player_Process_color_primaries
+///                  _string_,
+///     @return The colour primaries of the video stream in FFmpeg naming (ex. bt2020)\, or unknown
+///             when the stream does not signal them.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_color_primaries `Player.Process(video.color.primaries)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.Process(video.color.transfer.characteristic)`</b>,
+///                  \anchor Player_Process_color_transfer_characteristic
+///                  _string_,
+///     @return The transfer characteristic of the video stream in FFmpeg naming (ex. smpte2084)\,
+///             or unknown when the stream does not signal one.
+///     <p><hr>
+///     @skinning_v22 **[New Infolabel]** \link Player_Process_color_transfer_characteristic `Player.Process(video.color.transfer.characteristic)`\endlink
+///     <p>
+///   }
 /// \table_end
 ///
 /// -----------------------------------------------------------------------------
 // clang-format off
-constexpr std::array<InfoMap, 24> player_process = {{
+constexpr std::array<InfoMap, 82> player_process = {{
     {"videodecoder",        PLAYER_PROCESS_VIDEODECODER},
     {"deintmethod",         PLAYER_PROCESS_DEINTMETHOD},
     {"pixformat",           PLAYER_PROCESS_PIXELFORMAT},
@@ -1269,6 +1796,73 @@ constexpr std::array<InfoMap, 24> player_process = {{
     {"amlogic.displaymode", PLAYER_PROCESS_AML_DISPLAYMODE},
     {"amlogic.eoft_gamut",  PLAYER_PROCESS_AML_EOFT_GAMUT},
     {"audiochannelssink",   PLAYER_PROCESS_AUDIOCHANNELS_SINK},
+
+    {"video.hdr.type",                             PLAYER_PROCESS_VIDEO_HDR_TYPE},
+    {"video.hdr.type.raw",                         PLAYER_PROCESS_VIDEO_HDR_TYPE_RAW},
+    {"video.source.hdr.type",                      PLAYER_PROCESS_VIDEO_SOURCE_HDR_TYPE},
+    {"video.source.hdr.type.raw",                  PLAYER_PROCESS_VIDEO_SOURCE_HDR_TYPE_RAW},
+    {"video.source.additional.hdr.type",           PLAYER_PROCESS_VIDEO_SOURCE_ADDITIONAL_HDR_TYPE},
+    {"video.source.additional.hdr.type.raw",       PLAYER_PROCESS_VIDEO_SOURCE_ADDITIONAL_HDR_TYPE_RAW},
+
+    {"video.hdr.has.cll",                          PLAYER_PROCESS_VIDEO_HDR_HAS_CLL},
+    {"video.hdr.max.cll",                          PLAYER_PROCESS_VIDEO_HDR_MAX_CLL},
+    {"video.hdr.max.fall",                         PLAYER_PROCESS_VIDEO_HDR_MAX_FALL},
+    {"video.hdr.has.mdcv",                         PLAYER_PROCESS_VIDEO_HDR_HAS_MDCV},
+    {"video.hdr.min.lum",                          PLAYER_PROCESS_VIDEO_HDR_MIN_LUM},
+    {"video.hdr.max.lum",                          PLAYER_PROCESS_VIDEO_HDR_MAX_LUM},
+    {"video.hdr.colour.primaries",                 PLAYER_PROCESS_VIDEO_HDR_COLOUR_PRIMARIES},
+
+    {"video.dovi.has.config",                      PLAYER_PROCESS_VIDEO_DOVI_HAS_CONFIG},
+    {"video.dovi.has.header",                      PLAYER_PROCESS_VIDEO_DOVI_HAS_HEADER},
+    {"video.dovi.version.major",                   PLAYER_PROCESS_VIDEO_DOVI_VERSION_MAJOR},
+    {"video.dovi.version.minor",                   PLAYER_PROCESS_VIDEO_DOVI_VERSION_MINOR},
+    {"video.dovi.profile",                         PLAYER_PROCESS_VIDEO_DOVI_PROFILE},
+    {"video.dovi.level",                           PLAYER_PROCESS_VIDEO_DOVI_LEVEL},
+    {"video.dovi.rpu.present",                     PLAYER_PROCESS_VIDEO_DOVI_RPU_PRESENT},
+    {"video.dovi.el.present",                      PLAYER_PROCESS_VIDEO_DOVI_EL_PRESENT},
+    {"video.dovi.bl.present",                      PLAYER_PROCESS_VIDEO_DOVI_BL_PRESENT},
+    {"video.dovi.bl.signal.compatibility",         PLAYER_PROCESS_VIDEO_DOVI_BL_SIGNAL_COMPATIBILITY},
+    {"video.dovi.el.type",                         PLAYER_PROCESS_VIDEO_DOVI_EL_TYPE},
+    {"video.dovi.dual.track",                      PLAYER_PROCESS_VIDEO_DOVI_DUAL_TRACK},
+    {"video.dovi.codec.fourcc",                    PLAYER_PROCESS_VIDEO_DOVI_CODEC_FOURCC},
+    {"video.dovi.codec.string",                    PLAYER_PROCESS_VIDEO_DOVI_CODEC_STRING},
+    {"video.dovi.meta.version",                    PLAYER_PROCESS_VIDEO_DOVI_META_VERSION},
+
+    {"video.source.dovi.profile",                  PLAYER_PROCESS_VIDEO_SOURCE_DOVI_PROFILE},
+    {"video.source.dovi.el.present",               PLAYER_PROCESS_VIDEO_SOURCE_DOVI_EL_PRESENT},
+    {"video.source.dovi.el.type",                  PLAYER_PROCESS_VIDEO_SOURCE_DOVI_EL_TYPE},
+    {"video.source.dovi.bl.signal.compatibility",  PLAYER_PROCESS_VIDEO_SOURCE_DOVI_BL_SIGNAL_COMPATIBILITY},
+
+    {"video.dovi.source.min.pq",                   PLAYER_PROCESS_VIDEO_DOVI_SOURCE_MIN_PQ},
+    {"video.dovi.source.max.pq",                   PLAYER_PROCESS_VIDEO_DOVI_SOURCE_MAX_PQ},
+    {"video.dovi.source.min.nits",                 PLAYER_PROCESS_VIDEO_DOVI_SOURCE_MIN_NITS},
+    {"video.dovi.source.max.nits",                 PLAYER_PROCESS_VIDEO_DOVI_SOURCE_MAX_NITS},
+
+    {"video.dovi.has.l6",                          PLAYER_PROCESS_VIDEO_DOVI_HAS_L6},
+    {"video.dovi.l6.max.cll",                      PLAYER_PROCESS_VIDEO_DOVI_L6_MAX_CLL},
+    {"video.dovi.l6.max.fall",                     PLAYER_PROCESS_VIDEO_DOVI_L6_MAX_FALL},
+    {"video.dovi.l6.min.lum",                      PLAYER_PROCESS_VIDEO_DOVI_L6_MIN_LUM},
+    {"video.dovi.l6.max.lum",                      PLAYER_PROCESS_VIDEO_DOVI_L6_MAX_LUM},
+
+    {"video.dovi.l1.min.pq",                       PLAYER_PROCESS_VIDEO_DOVI_L1_MIN_PQ},
+    {"video.dovi.l1.max.pq",                       PLAYER_PROCESS_VIDEO_DOVI_L1_MAX_PQ},
+    {"video.dovi.l1.avg.pq",                       PLAYER_PROCESS_VIDEO_DOVI_L1_AVG_PQ},
+    {"video.dovi.l1.min.nits",                     PLAYER_PROCESS_VIDEO_DOVI_L1_MIN_NITS},
+    {"video.dovi.l1.max.nits",                     PLAYER_PROCESS_VIDEO_DOVI_L1_MAX_NITS},
+    {"video.dovi.l1.avg.nits",                     PLAYER_PROCESS_VIDEO_DOVI_L1_AVG_NITS},
+
+    {"video.dovi.has.l5",                          PLAYER_PROCESS_VIDEO_DOVI_HAS_L5},
+    {"video.dovi.l5.left.offset",                  PLAYER_PROCESS_VIDEO_DOVI_L5_LEFT_OFFSET},
+    {"video.dovi.l5.right.offset",                 PLAYER_PROCESS_VIDEO_DOVI_L5_RIGHT_OFFSET},
+    {"video.dovi.l5.top.offset",                   PLAYER_PROCESS_VIDEO_DOVI_L5_TOP_OFFSET},
+    {"video.dovi.l5.bottom.offset",                PLAYER_PROCESS_VIDEO_DOVI_L5_BOTTOM_OFFSET},
+
+    {"render.pts",                                 PLAYER_PROCESS_RENDER_PTS},
+    {"video.bit.depth",                            PLAYER_PROCESS_VIDEO_BIT_DEPTH},
+    {"video.color.space",                          PLAYER_PROCESS_VIDEO_COLOR_SPACE},
+    {"video.color.range",                          PLAYER_PROCESS_VIDEO_COLOR_RANGE},
+    {"video.color.primaries",                      PLAYER_PROCESS_VIDEO_COLOR_PRIMARIES},
+    {"video.color.transfer.characteristic",        PLAYER_PROCESS_VIDEO_COLOR_TRANSFER_CHARACTERISTIC},
 }};
 // clang-format on
 
