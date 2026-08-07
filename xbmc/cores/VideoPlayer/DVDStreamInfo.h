@@ -25,6 +25,62 @@ extern "C"
 class CDemuxStream;
 struct DemuxCryptoSession;
 
+enum class DOVIELType
+{
+  NONE = 0,
+  FEL,
+  MEL
+};
+
+struct DOVIFrameMetadata
+{
+  double pts{0.0};
+  uint16_t level1MinPq{};
+  uint16_t level1MaxPq{};
+  uint16_t level1AvgPq{};
+
+  bool hasLevel5Metadata{};
+  uint16_t level5ActiveAreaLeftOffset{};
+  uint16_t level5ActiveAreaRightOffset{};
+  uint16_t level5ActiveAreaTopOffset{};
+  uint16_t level5ActiveAreaBottomOffset{};
+};
+
+struct DOVIStreamMetadata
+{
+  uint16_t sourceMinPq{};
+  uint16_t sourceMaxPq{};
+
+  bool hasLevel6Metadata{};
+  uint16_t level6MaxLum{};
+  uint16_t level6MinLum{};
+  uint16_t level6MaxCll{};
+  uint16_t level6MaxFall{};
+
+  std::string metaVersion;
+};
+
+struct DOVIStreamInfo
+{
+  DOVIELType elType{DOVIELType::NONE};
+  bool hasConfig{};
+  bool hasHeader{};
+  bool isDualTrack{};
+  AVDOVIDecoderConfigurationRecord dovi{};
+};
+
+struct HDRStaticMetadataInfo
+{
+  bool hasMdcvMetadata{};
+  uint32_t maxLum{};
+  uint32_t minLum{};
+  std::string colourPrimaries;
+
+  bool hasCllMetadata{};
+  uint16_t maxCll{};
+  uint16_t maxFall{};
+};
+
 class CDVDStreamInfo
 {
 public:
