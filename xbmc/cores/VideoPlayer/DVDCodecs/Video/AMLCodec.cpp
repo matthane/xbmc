@@ -1991,6 +1991,23 @@ std::string GetDoViCodecFourCC(unsigned int codec_tag)
 
   return fourCC;
 }
+
+void PublishVideoDetails(const CDVDStreamInfo& hints, bool doviIsFEL)
+{
+  CDataCacheCore& dataCache = CServiceBroker::GetDataCacheCore();
+
+  dataCache.SetVideoHdrType(hints.hdrType);
+  dataCache.SetVideoColorSpace(hints.colorSpace);
+  dataCache.SetVideoColorRange(hints.colorRange);
+  dataCache.SetVideoColorPrimaries(hints.colorPrimaries);
+  dataCache.SetVideoColorTransferCharacteristic(hints.colorTransferCharacteristic);
+
+  // the full enhancement layer is composed back into 12 bit once dv processing ran
+  if (hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && doviIsFEL)
+    dataCache.SetVideoBitDepth(12);
+  else
+    dataCache.SetVideoBitDepth(hints.bitdepth);
+}
 } // unnamed namespace
 
 bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
@@ -2142,6 +2159,8 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
 
     CServiceBroker::GetDataCacheCore().SetVideoDoViCodecFourCC(GetDoViCodecFourCC(hints.codec_tag));
   }
+
+  PublishVideoDetails(hints, doviIsFEL);
 
   m_processInfo.SetVideoDAR(hints.aspect);
   CLog::Log(LOGDEBUG, "CAMLCodec::OpenDecoder decoder timeout: {:d}s",
