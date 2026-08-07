@@ -10,6 +10,7 @@
 
 #include "EdlEdit.h"
 #include "cores/VideoPlayer/DVDStreamInfo.h"
+#include "cores/VideoPlayer/Interface/StreamInfo.h"
 #include "threads/CriticalSection.h"
 #include "utils/AgedMap.h"
 
@@ -18,6 +19,11 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+
+extern "C"
+{
+#include <libavutil/pixfmt.h>
+}
 
 class CDataCacheCore
 {
@@ -49,6 +55,23 @@ public:
   float GetVideoFps();
   void SetVideoDAR(float dar);
   float GetVideoDAR();
+  void SetVideoBitDepth(int bitDepth);
+  int GetVideoBitDepth();
+  void SetVideoHdrType(StreamHdrType hdrType);
+  StreamHdrType GetVideoHdrType();
+  void SetVideoSourceHdrType(StreamHdrType hdrType);
+  StreamHdrType GetVideoSourceHdrType();
+  void SetVideoSourceAdditionalHdrType(StreamHdrType hdrType);
+  StreamHdrType GetVideoSourceAdditionalHdrType();
+  void SetVideoColorSpace(AVColorSpace colorSpace);
+  AVColorSpace GetVideoColorSpace();
+  void SetVideoColorRange(AVColorRange colorRange);
+  AVColorRange GetVideoColorRange();
+  void SetVideoColorPrimaries(AVColorPrimaries colorPrimaries);
+  AVColorPrimaries GetVideoColorPrimaries();
+  void SetVideoColorTransferCharacteristic(
+      AVColorTransferCharacteristic colorTransferCharacteristic);
+  AVColorTransferCharacteristic GetVideoColorTransferCharacteristic();
   void SetVideoDoViFrameMetadata(const DOVIFrameMetadata& frameMetadata);
   DOVIFrameMetadata GetVideoDoViFrameMetadata();
   void SetVideoDoViStreamMetadata(const DOVIStreamMetadata& streamMetadata);
@@ -259,6 +282,14 @@ protected:
     float fps;
     float dar;
     bool m_isInterlaced;
+    int bitDepth{0};
+    StreamHdrType hdrType{StreamHdrType::HDR_TYPE_NONE};
+    StreamHdrType sourceHdrType{StreamHdrType::HDR_TYPE_NONE};
+    StreamHdrType sourceAdditionalHdrType{StreamHdrType::HDR_TYPE_NONE};
+    AVColorSpace colorSpace{AVCOL_SPC_UNSPECIFIED};
+    AVColorRange colorRange{AVCOL_RANGE_UNSPECIFIED};
+    AVColorPrimaries colorPrimaries{AVCOL_PRI_UNSPECIFIED};
+    AVColorTransferCharacteristic colorTransferCharacteristic{AVCOL_TRC_UNSPECIFIED};
     CAgedMap<uint64_t, DOVIFrameMetadata> doviFrameMetadataMap;
     DOVIStreamMetadata doviStreamMetadata;
     DOVIStreamInfo doviStreamInfo;

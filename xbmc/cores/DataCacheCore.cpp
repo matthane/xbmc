@@ -259,6 +259,119 @@ bool CDataCacheCore::IsVideoInterlaced()
   return m_playerVideoInfo.m_isInterlaced;
 }
 
+void CDataCacheCore::SetVideoBitDepth(int bitDepth)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.bitDepth = bitDepth;
+}
+
+int CDataCacheCore::GetVideoBitDepth()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.bitDepth;
+}
+
+void CDataCacheCore::SetVideoHdrType(StreamHdrType hdrType)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.hdrType = hdrType;
+}
+
+StreamHdrType CDataCacheCore::GetVideoHdrType()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.hdrType;
+}
+
+void CDataCacheCore::SetVideoSourceHdrType(StreamHdrType hdrType)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.sourceHdrType = hdrType;
+}
+
+StreamHdrType CDataCacheCore::GetVideoSourceHdrType()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.sourceHdrType;
+}
+
+void CDataCacheCore::SetVideoSourceAdditionalHdrType(StreamHdrType hdrType)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.sourceAdditionalHdrType = hdrType;
+}
+
+StreamHdrType CDataCacheCore::GetVideoSourceAdditionalHdrType()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.sourceAdditionalHdrType;
+}
+
+void CDataCacheCore::SetVideoColorSpace(AVColorSpace colorSpace)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.colorSpace = colorSpace;
+}
+
+AVColorSpace CDataCacheCore::GetVideoColorSpace()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.colorSpace;
+}
+
+void CDataCacheCore::SetVideoColorRange(AVColorRange colorRange)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.colorRange = colorRange;
+}
+
+AVColorRange CDataCacheCore::GetVideoColorRange()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.colorRange;
+}
+
+void CDataCacheCore::SetVideoColorPrimaries(AVColorPrimaries colorPrimaries)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.colorPrimaries = colorPrimaries;
+}
+
+AVColorPrimaries CDataCacheCore::GetVideoColorPrimaries()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.colorPrimaries;
+}
+
+void CDataCacheCore::SetVideoColorTransferCharacteristic(
+    AVColorTransferCharacteristic colorTransferCharacteristic)
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  m_playerVideoInfo.colorTransferCharacteristic = colorTransferCharacteristic;
+}
+
+AVColorTransferCharacteristic CDataCacheCore::GetVideoColorTransferCharacteristic()
+{
+  std::unique_lock lock(m_videoPlayerSection);
+
+  return m_playerVideoInfo.colorTransferCharacteristic;
+}
+
 void CDataCacheCore::SetVideoDoViFrameMetadata(const DOVIFrameMetadata& frameMetadata)
 {
   std::unique_lock lock(m_videoPlayerSection);
