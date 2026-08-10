@@ -46,5 +46,229 @@ CoreELEC specific info labels, registered through the CoreELEC label registry
     @skinning_v22 **[New Infolabel]** \link System_linuxver `System.linuxver`\endlink
     <p>
   }
+  \table_row3{   <b>`Player.Process(video.dovi.apiversion)`</b>,
+                 \anchor Player_Process_video_dovi_apiversion
+                 _string_,
+    @return Version of the video.dovi info label interface.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_apiversion `Player.Process(video.dovi.apiversion)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.profile)`</b>,
+                 \anchor Player_Process_video_dovi_profile
+                 _string_,
+    @return Dolby Vision profile of the source stream with the compatibility id when known\,
+    for example 8.1. The integer form is the base profile.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_profile `Player.Process(video.dovi.profile)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.el.type)`</b>,
+                 \anchor Player_Process_video_dovi_el_type
+                 _string_,
+    @return Enhancement layer type (FEL or MEL) for profile 7 streams.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_el_type `Player.Process(video.dovi.el.type)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.source.min.pq)`</b>,
+                 \anchor Player_Process_video_dovi_source_min_pq
+                 _string_,
+    @return Source minimum brightness as a 12 bit PQ code.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_source_min_pq `Player.Process(video.dovi.source.min.pq)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.source.min.nits)`</b>,
+                 \anchor Player_Process_video_dovi_source_min_nits
+                 _string_,
+    @return Source minimum brightness in cd/m2. The integer form is the value rounded to whole cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_source_min_nits `Player.Process(video.dovi.source.min.nits)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.source.max.pq)`</b>,
+                 \anchor Player_Process_video_dovi_source_max_pq
+                 _string_,
+    @return Source maximum brightness as a 12 bit PQ code.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_source_max_pq `Player.Process(video.dovi.source.max.pq)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.source.max.nits)`</b>,
+                 \anchor Player_Process_video_dovi_source_max_nits
+                 _string_,
+    @return Source maximum brightness in cd/m2. The integer form is the value rounded to whole cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_source_max_nits `Player.Process(video.dovi.source.max.nits)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.min.pq)`</b>,
+                 \anchor Player_Process_video_dovi_l1_min_pq
+                 _string_,
+    @return L1 minimum brightness of the current frame as a 12 bit PQ code.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_min_pq `Player.Process(video.dovi.l1.min.pq)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.min.nits)`</b>,
+                 \anchor Player_Process_video_dovi_l1_min_nits
+                 _string_,
+    @return L1 minimum brightness of the current frame in cd/m2. The integer form is the value rounded to whole cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_min_nits `Player.Process(video.dovi.l1.min.nits)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.max.pq)`</b>,
+                 \anchor Player_Process_video_dovi_l1_max_pq
+                 _string_,
+    @return L1 maximum brightness of the current frame as a 12 bit PQ code.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_max_pq `Player.Process(video.dovi.l1.max.pq)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.max.nits)`</b>,
+                 \anchor Player_Process_video_dovi_l1_max_nits
+                 _string_,
+    @return L1 maximum brightness of the current frame in cd/m2. The integer form is the value rounded to whole cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_max_nits `Player.Process(video.dovi.l1.max.nits)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.avg.pq)`</b>,
+                 \anchor Player_Process_video_dovi_l1_avg_pq
+                 _string_,
+    @return L1 average brightness of the current frame as a 12 bit PQ code.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_avg_pq `Player.Process(video.dovi.l1.avg.pq)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l1.avg.nits)`</b>,
+                 \anchor Player_Process_video_dovi_l1_avg_nits
+                 _string_,
+    @return L1 average brightness of the current frame in cd/m2. The integer form is the value rounded to whole cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l1_avg_nits `Player.Process(video.dovi.l1.avg.nits)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l5.left.offset)`</b>,
+                 \anchor Player_Process_video_dovi_l5_left_offset
+                 _string_,
+    @return L5 active area offset from the left edge in pixels.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l5_left_offset `Player.Process(video.dovi.l5.left.offset)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l5.right.offset)`</b>,
+                 \anchor Player_Process_video_dovi_l5_right_offset
+                 _string_,
+    @return L5 active area offset from the right edge in pixels.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l5_right_offset `Player.Process(video.dovi.l5.right.offset)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l5.top.offset)`</b>,
+                 \anchor Player_Process_video_dovi_l5_top_offset
+                 _string_,
+    @return L5 active area offset from the top edge in pixels.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l5_top_offset `Player.Process(video.dovi.l5.top.offset)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l5.bottom.offset)`</b>,
+                 \anchor Player_Process_video_dovi_l5_bottom_offset
+                 _string_,
+    @return L5 active area offset from the bottom edge in pixels.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l5_bottom_offset `Player.Process(video.dovi.l5.bottom.offset)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l6.max.cll)`</b>,
+                 \anchor Player_Process_video_dovi_l6_max_cll
+                 _string_,
+    @return L6 maximum content light level in cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l6_max_cll `Player.Process(video.dovi.l6.max.cll)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l6.max.fall)`</b>,
+                 \anchor Player_Process_video_dovi_l6_max_fall
+                 _string_,
+    @return L6 maximum frame average light level in cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l6_max_fall `Player.Process(video.dovi.l6.max.fall)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l6.min.lum)`</b>,
+                 \anchor Player_Process_video_dovi_l6_min_lum
+                 _string_,
+    @return L6 minimum display mastering luminance in cd/m2\, converted from the raw 0.0001 cd/m2
+    encoding. Same unit as video.hdr.min.lum. No integer form\, the value is usually below 1.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l6_min_lum `Player.Process(video.dovi.l6.min.lum)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.l6.max.lum)`</b>,
+                 \anchor Player_Process_video_dovi_l6_max_lum
+                 _string_,
+    @return L6 maximum display mastering luminance in cd/m2.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_l6_max_lum `Player.Process(video.dovi.l6.max.lum)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.meta.version)`</b>,
+                 \anchor Player_Process_video_dovi_meta_version
+                 _string_,
+    @return Dolby Vision creative metadata version\, 2.9 or 4.0.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_meta_version `Player.Process(video.dovi.meta.version)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.dovi.flags)`</b>,
+                 \anchor Player_Process_video_dovi_flags
+                 _string_,
+    @return Active player transformations as space separated tokens out of converted (profile 7 or 4
+    to 8.1 conversion)\, l5zeroed (L5 offsets zeroed)\, rpuremoved (metadata removed for a display
+    without Dolby Vision\, labels keep reporting what the stream carries) and compressed (stream
+    uses metadata compression\, source PQ values not sent on compressed frames). The integer form is
+    a bitmask in the same order.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_dovi_flags `Player.Process(video.dovi.flags)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.hdr.max.cll)`</b>,
+                 \anchor Player_Process_video_hdr_max_cll
+                 _string_,
+    @return Maximum content light level of the stream in cd/m2\, from the stream hints or the
+    video SEI.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_hdr_max_cll `Player.Process(video.hdr.max.cll)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.hdr.max.fall)`</b>,
+                 \anchor Player_Process_video_hdr_max_fall
+                 _string_,
+    @return Maximum frame average light level of the stream in cd/m2\, from the stream hints or the video SEI.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_hdr_max_fall `Player.Process(video.hdr.max.fall)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.hdr.min.lum)`</b>,
+                 \anchor Player_Process_video_hdr_min_lum
+                 _string_,
+    @return Mastering display minimum luminance in cd/m2 (ST 2086)\, from the stream hints or the video SEI. No
+    integer form\, the value is usually below 1.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_hdr_min_lum `Player.Process(video.hdr.min.lum)`\endlink
+    <p>
+  }
+  \table_row3{   <b>`Player.Process(video.hdr.max.lum)`</b>,
+                 \anchor Player_Process_video_hdr_max_lum
+                 _string_,
+    @return Mastering display maximum luminance in cd/m2 (ST 2086)\, from the stream hints or the video SEI.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_hdr_max_lum `Player.Process(video.hdr.max.lum)`\endlink
+    <p>
+  }
 \table_end
 */
