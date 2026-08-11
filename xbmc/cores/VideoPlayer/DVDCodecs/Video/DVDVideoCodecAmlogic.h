@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "AMLFrameMetadata.h"
 #include "DVDVideoCodec.h"
 #include "DVDStreamInfo.h"
 #include "threads/CriticalSection.h"
@@ -83,6 +84,8 @@ public:
 
 protected:
   void            Close(void);
+  void            DrainMetadataToClock();
+  double          RenderDisplayLatency();
   void            FrameRateTracking(uint8_t *pData, int iSize, double dts, double pts);
   //void            RemoveInfo(CDVDAmlogicInfo* info);
 
@@ -109,4 +112,14 @@ private:
   static std::atomic<bool> m_InstanceGuard;
 
   std::list<DLDemuxPacket> m_packages;
+
+  uint32_t m_metadataToken{0};
+  bool m_metaPerFrame{false};
+  bool m_metaLeadLogged{false};
+  int m_nalLengthSize{0};
+  double m_lastCommitPts{0.0};
+  AMLFrameMetadata m_streamMeta;
+  AMLFrameMetadata m_pendingMeta;
+  AMLFrameMetadata m_lastMeta;
+  CAMLFrameMetadataSequencer m_metadataSequencer;
 };
