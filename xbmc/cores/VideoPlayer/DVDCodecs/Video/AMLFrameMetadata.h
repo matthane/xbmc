@@ -44,6 +44,10 @@ struct AMLFrameMetadata
   std::string hdrMdcv;
   std::string hdrCll;
 
+  // coded bit depth, answered under its own label and left out of the
+  // video.sidedata payload
+  int bitDepth{0};
+
   bool operator==(const AMLFrameMetadata&) const = default;
 
   // a frame without a payload holds the last carried one instead of
@@ -582,4 +586,89 @@ inline std::string AMLSerializeContentLight(const AVContentLightMetadata& light)
       static_cast<uint8_t>(light.MaxCLL >> 8), static_cast<uint8_t>(light.MaxCLL & 0xff),
       static_cast<uint8_t>(light.MaxFALL >> 8), static_cast<uint8_t>(light.MaxFALL & 0xff)};
   return Base64::Encode(reinterpret_cast<const char*>(out), sizeof(out));
+}
+
+constexpr uint32_t AML_VP9_FRAME_MARKER = 2;
+constexpr uint32_t AML_VP9_SYNC_CODE = 0x498342;
+
+// MSB first bit reader for the VP9 walk below. An overrun returns zeros and
+// latches the overflow flag, so a parse validates once at the end instead of
+// after every field
+class CAMLBitReader
+{
+public:
+  CAMLBitReader(const uint8_t* data, size_t size) : m_data(data), m_bits(size * 8) {}
+
+  uint32_t ReadBit()
+  {
+    if (m_pos >= m_bits)
+    {
+      m_overflow = true;
+      return 0;
+    }
+    const uint32_t bit = (m_data[m_pos >> 3] >> (7 - (m_pos & 7))) & 1;
+    ++m_pos;
+    return bit;
+  }
+
+  uint32_t ReadBits(uint32_t count)
+  {
+    uint32_t value = 0;
+    for (uint32_t i = 0; i < count; ++i)
+      value = (value << 1) | ReadBit();
+    return value;
+  }
+
+  void SkipBits(uint32_t count)
+  {
+    if (count > m_bits - m_pos)
+    {
+      m_pos = m_bits;
+      m_overflow = true;
+      return;
+    }
+    m_pos += count;
+  }
+
+  bool Overflow() const { return m_overflow; }
+
+private:
+  const uint8_t* m_data;
+  size_t m_bits;
+  size_t m_pos{0};
+  bool m_overflow{false};
+};
+
+// Reads the coded bit depth from the VP9 uncompressed header at packet start.
+// VP9 has no configuration record and signals its color config on keyframes,
+// which is where the walk reads it.
+inline bool AMLParseVp9BitDepth(const uint8_t* data, size_t size, AMLFrameMetadata& meta)
+{
+  if (!data || size < 4)
+    return false;
+
+  CAMLBitReader reader(data, size);
+  if (reader.ReadBits(2) != AML_VP9_FRAME_MARKER)
+    return false;
+
+  uint32_t profile = reader.ReadBit();
+  profile |= reader.ReadBit() << 1;
+  if (profile == 3)
+    reader.SkipBits(1); // reserved_zero
+  if (reader.ReadBit()) // show_existing_frame
+    return false;
+  if (reader.ReadBit()) // frame_type, 0 is a keyframe
+    return false;
+  reader.SkipBits(2); // show_frame, error_resilient_mode
+  if (reader.ReadBits(24) != AML_VP9_SYNC_CODE)
+    return false;
+
+  int depth = 8;
+  if (profile >= 2)
+    depth = reader.ReadBit() ? 12 : 10;
+  if (reader.Overflow())
+    return false;
+
+  meta.bitDepth = depth;
+  return true;
 }
