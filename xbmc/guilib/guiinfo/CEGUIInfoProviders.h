@@ -180,6 +180,7 @@ inline void Register(CGUIInfoManager& infoManager)
   registry.Add("player.process(amlogic.eoft_gamut)", CE_PLAYER_PROCESS_AML_EOFT_GAMUT);
   registry.Add("player.process(audiochannelssink)", CE_PLAYER_PROCESS_AUDIOCHANNELS_SINK);
   registry.Add("player.process(video.sidedata)", CE_PLAYER_PROCESS_VIDEO_SIDEDATA);
+  registry.Add("player.process(video.bitdepth)", CE_PLAYER_PROCESS_VIDEO_BITDEPTH);
   registry.Add("system.linuxver", CE_SYSTEM_LINUX_VER);
 
   std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());

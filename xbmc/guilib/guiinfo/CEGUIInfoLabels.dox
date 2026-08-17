@@ -69,5 +69,14 @@ CoreELEC specific info labels, registered through the CoreELEC label registry
     @skinning_v22 **[New Infolabel]** \link Player_Process_video_sidedata `Player.Process(video.sidedata)`\endlink
     <p>
   }
+  \table_row3{   <b>`Player.Process(video.bitdepth)`</b>,
+                 \anchor Player_Process_video_bitdepth
+                 _string_,
+    @return Coded bit depth of the current video stream (e.g. `8`\, `10`).
+    Empty when the source never reported one.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link Player_Process_video_bitdepth `Player.Process(video.bitdepth)`\endlink
+    <p>
+  }
 \table_end
 */

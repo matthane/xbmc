@@ -238,6 +238,13 @@ inline const std::string& AMLGetCachedSideData()
 
 inline bool AMLFrameMetadataGetLabel(std::string& value, int info)
 {
+  if (static_cast<uint32_t>(info) == CE::GUIINFO::CE_PLAYER_PROCESS_VIDEO_BITDEPTH)
+  {
+    const int bitDepth = CAMLFrameMetadataStore::GetInstance().Get().bitDepth;
+    value = bitDepth > 0 ? std::to_string(bitDepth) : "";
+    return true;
+  }
+
   if (static_cast<uint32_t>(info) != CE::GUIINFO::CE_PLAYER_PROCESS_VIDEO_SIDEDATA)
     return false;
   value = AMLGetCachedSideData();
