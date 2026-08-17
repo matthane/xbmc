@@ -30,6 +30,8 @@
 extern "C"
 {
 #include <libavutil/hdr_dynamic_metadata.h>
+#include <libavutil/mem.h>
+#include <libavutil/pixdesc.h>
 }
 
 #define __MODULE_NAME__ "DVDVideoCodecAmlogic"
@@ -119,6 +121,7 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
   m_nalLengthSize = 0;
   m_streamMeta = {};
   m_stripHdr10Plus = false;
+  m_bitDepthDone = false;
   m_metadataSequencer.Reset();
 
   CLog::Log(LOGDEBUG, "CDVDVideoCodecAmlogic::Opening: codec {:d} profile:{:d} extra_size:{:d}", m_hints.codec, hints.profile, hints.extradata.GetSize());
@@ -437,6 +440,42 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
     m_streamMeta.doviConfig = AMLSerializeDoviConfig(hints.dovi);
   m_dualLayer = hints.dovi.el_present_flag;
 
+  // HEVC/AV1/VVC hand extradata and coded headers to ffmpeg's parser; VP9
+  // latches from its keyframe walk; AVS2/AVS3 have only hints.bitdepth; the
+  // default arm codecs reach this decoder 8 bit only
+  switch(hints.codec)
+  {
+    case AV_CODEC_ID_HEVC:
+    case AV_CODEC_ID_AV1:
+    case AV_CODEC_ID_VVC:
+      m_bitDepthParser = av_parser_init(hints.codec);
+      m_bitDepthCtx = avcodec_alloc_context3(avcodec_find_decoder(hints.codec));
+      if (m_bitDepthParser)
+        m_bitDepthParser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
+      if (m_bitDepthCtx && hints.extradata)
+      {
+        m_bitDepthCtx->extradata = static_cast<uint8_t*>(
+            av_malloc(hints.extradata.GetSize() + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (m_bitDepthCtx->extradata)
+        {
+          memcpy(m_bitDepthCtx->extradata, hints.extradata.GetData(), hints.extradata.GetSize());
+          memset(m_bitDepthCtx->extradata + hints.extradata.GetSize(), 0,
+                 AV_INPUT_BUFFER_PADDING_SIZE);
+          m_bitDepthCtx->extradata_size = hints.extradata.GetSize();
+        }
+      }
+      break;
+    case AV_CODEC_ID_VP9:
+    case AV_CODEC_ID_AVS2:
+    case AV_CODEC_ID_AVS3:
+      break;
+    default:
+      m_streamMeta.bitDepth = 8;
+      break;
+  }
+  if (!m_streamMeta.bitDepth)
+    m_streamMeta.bitDepth = hints.bitdepth;
+
   m_pendingMeta = m_streamMeta;
   m_lastMeta = m_streamMeta;
   m_metadataToken = CAMLFrameMetadataStore::GetInstance().Register();
@@ -477,6 +516,13 @@ void CDVDVideoCodecAmlogic::Close(void)
 
   if (m_bitparser)
     delete m_bitparser, m_bitparser = NULL;
+
+  if (m_bitDepthParser)
+  {
+    av_parser_close(m_bitDepthParser);
+    m_bitDepthParser = nullptr;
+  }
+  avcodec_free_context(&m_bitDepthCtx);
 
   m_opened = false;
 }
@@ -526,6 +572,32 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
           break;
         default:
           break;
+      }
+    }
+
+    // the parser outranks the seed once it reports a format, and the format
+    // cannot change again within one stream, so it is freed on success. The BL
+    // and EL are independent HEVC sub-bitstreams sharing one parameter-set
+    // table, so the EL skips the parser here and keeps hints.bitdepth from Open
+    if (m_bitDepthParser && !m_bitDepthDone &&
+        (m_hints.codec != AV_CODEC_ID_HEVC || !packet.isDualStream))
+    {
+      uint8_t* outData = nullptr;
+      int outSize = 0;
+      av_parser_parse2(m_bitDepthParser, m_bitDepthCtx, &outData, &outSize, pData, iSize,
+                        AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+      if (m_bitDepthParser->format != AV_PIX_FMT_NONE)
+      {
+        m_streamMeta.bitDepth =
+            av_pix_fmt_desc_get(static_cast<AVPixelFormat>(m_bitDepthParser->format))
+                ->comp[0]
+                .depth;
+        m_pendingMeta.bitDepth = m_streamMeta.bitDepth;
+        m_bitDepthDone = true;
+
+        av_parser_close(m_bitDepthParser);
+        avcodec_free_context(&m_bitDepthCtx);
+        m_bitDepthParser = nullptr;
       }
     }
 
@@ -670,6 +742,12 @@ bool CDVDVideoCodecAmlogic::AddData(const DemuxPacket &packet)
   }
 
   data_added = m_Codec->AddData(pData, iSize, packet.dts, m_hints.ptsinvalid ? DVD_NOPTS_VALUE : packet.pts);
+
+  if (data_added && packet.pData && m_hints.codec == AV_CODEC_ID_VP9)
+  {
+    AMLParseVp9BitDepth(pData, iSize, m_streamMeta);
+    m_pendingMeta.bitDepth = m_streamMeta.bitDepth;
+  }
 
   if (data_added && packet.pData)
   {

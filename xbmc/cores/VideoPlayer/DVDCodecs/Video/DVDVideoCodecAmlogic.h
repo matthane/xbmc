@@ -117,6 +117,9 @@ private:
   bool m_metaLeadLogged{false};
   bool m_stripHdr10Plus{false};
   bool m_dualLayer{false};
+  bool m_bitDepthDone{false};
+  AVCodecParserContext* m_bitDepthParser{nullptr};
+  AVCodecContext* m_bitDepthCtx{nullptr};
   int m_nalLengthSize{0};
   double m_lastCommitPts{0.0};
   AMLFrameMetadata m_streamMeta;
