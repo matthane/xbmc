@@ -333,6 +333,39 @@ bool CDVDVideoCodecAmlogic::Open(CDVDStreamInfo &hints, CDVDCodecOptions &option
               m_streamMeta.flags.push_back("l5-zeroed");
           }
 
+          if (!user_dv_disable)
+          {
+            const int cmv40Action = CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+                CSettings::SETTING_COREELEC_AMLOGIC_DV_CMV40);
+            int cmv40EffectiveAction = cmv40Action;
+            if (cmv40Action == static_cast<int>(DoviCmv40Action::ADD_SMART))
+            {
+              const int cmv40Nits = CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+                  CSettings::SETTING_COREELEC_AMLOGIC_DV_CMV40_NITS);
+              if (cmv40Nits == 0)
+              {
+                CLog::Log(LOGINFO, "{}::{} - CMv4.0 smart selected without a display peak set, metadata will be appended unconditionally", __MODULE_NAME__, __FUNCTION__);
+                cmv40EffectiveAction = static_cast<int>(DoviCmv40Action::ADD_DEFAULT);
+              }
+              else
+              {
+                m_bitstream->SetDoviCmv40ThresholdPct(
+                    CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+                        CSettings::SETTING_COREELEC_AMLOGIC_DV_CMV40_THRESHOLD));
+                m_bitstream->SetDoviCmv40DisplayNits(cmv40Nits);
+              }
+            }
+            m_bitstream->SetDoviCmv40Action(cmv40EffectiveAction);
+            if (cmv40EffectiveAction == static_cast<int>(DoviCmv40Action::STRIP))
+              m_streamMeta.flags.push_back("cmv40-stripped");
+            else if (cmv40EffectiveAction == static_cast<int>(DoviCmv40Action::ADD_DEFAULT))
+              m_streamMeta.flags.push_back("cmv40-added");
+            else if (cmv40EffectiveAction == static_cast<int>(DoviCmv40Action::ADD_NO_L2))
+              m_streamMeta.flags.push_back("cmv40-no-l2");
+            else if (cmv40EffectiveAction == static_cast<int>(DoviCmv40Action::ADD_SMART))
+              m_streamMeta.flags.push_back("cmv40-smart");
+          }
+
           if ((m_hints.dovi.dv_profile == 4 || m_hints.dovi.dv_profile == 7) && !user_dv_disable &&
                aml_get_cpufamily_id() == AML_S5)
           {

@@ -4018,6 +4018,51 @@
           </constraints>
           <control type="spinner" format="string" />
         </setting>
+        <setting id="coreelec.amlogic.dolbyvisioncmv40" type="integer" label="14428" help="14429">
+          <requirement>HAVE_AMCODEC</requirement>
+          <default>0</default>
+          <constraints>
+            <options>
+              <option label="351">0</option> <!-- off -->
+              <option label="14430">1</option> <!-- strip CMv4.0 -->
+              <option label="14431">2</option> <!-- add CMv4.0 defaults -->
+              <option label="14432">3</option> <!-- add when no L2 trims -->
+              <option label="14433">4</option> <!-- add smart -->
+            </options>
+          </constraints>
+          <control type="spinner" format="string" />
+          <dependencies>
+            <dependency type="enable" setting="coreelec.amlogic.disabledolbyvision" operator="is">false</dependency>
+          </dependencies>
+        </setting>
+        <setting id="coreelec.amlogic.dolbyvisioncmv40threshold" type="integer" label="14434" help="14435">
+          <requirement>HAVE_AMCODEC</requirement>
+          <default>20</default>
+          <constraints>
+            <minimum>0</minimum>
+            <step>1</step>
+            <maximum>50</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+          <dependencies>
+            <dependency type="enable" setting="coreelec.amlogic.disabledolbyvision" operator="is">false</dependency>
+            <dependency type="visible" setting="coreelec.amlogic.dolbyvisioncmv40" operator="is">4</dependency>
+          </dependencies>
+        </setting>
+        <setting id="coreelec.amlogic.dolbyvisioncmv40nits" type="integer" label="14436" help="14437">
+          <requirement>HAVE_AMCODEC</requirement>
+          <default>0</default>
+          <constraints>
+            <minimum>0</minimum>
+            <step>1</step>
+            <maximum>10000</maximum>
+          </constraints>
+          <control type="edit" format="integer" />
+          <dependencies>
+            <dependency type="enable" setting="coreelec.amlogic.disabledolbyvision" operator="is">false</dependency>
+            <dependency type="visible" setting="coreelec.amlogic.dolbyvisioncmv40" operator="is">4</dependency>
+          </dependencies>
+        </setting>
         <setting id="videoplayer.dovizerolevel5" type="boolean" label="39209" help="39210">
           <requirement>HAVE_AMCODEC</requirement>
           <dependencies>

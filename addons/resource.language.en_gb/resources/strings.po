@@ -9123,6 +9123,56 @@ msgctxt "#14427"
 msgid "Player-Led"
 msgstr ""
 
+#: system/settings/settings.xml
+msgctxt "#14428"
+msgid "Dolby Vision CMv4.0 metadata"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14429"
+msgid "Strip CMv4.0 removes metadata for black-screening displays, falling back to CMv2.9. Add CMv4.0 defaults always inserts it. Add CMv4.0 if no L2 trims inserts it only when absent. Add CMv4.0 smart inserts it unless brightness exceeds the display peak plus threshold, with L2 trims present."
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14430"
+msgid "Strip CMv4.0"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14431"
+msgid "Add CMv4.0 defaults"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14432"
+msgid "Add CMv4.0 if no L2 trims"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14433"
+msgid "Add CMv4.0 smart"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14434"
+msgid "Dolby Vision CMv4.0 smart threshold"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14435"
+msgid "Percentage above the display's peak brightness that content is allowed to exceed, using the current frame's L1 peak, before smart mode bypasses CMv4.0 metadata."
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14436"
+msgid "Dolby Vision CMv4.0 display peak brightness"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14437"
+msgid "Peak brightness of the display in nits, used by CMv4.0 smart mode. 0 means unknown; smart mode then appends CMv4.0 metadata unconditionally."
+msgstr ""
+
 #: xbmc/music/MusicDatabase.cpp
 #: xbmc/video/VideoDatabase.cpp
 msgctxt "#15011"

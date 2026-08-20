@@ -19,6 +19,7 @@
 #include "HevcSei.h"
 
 #include <algorithm>
+#include <cmath>
 
 extern "C"
 {
@@ -2119,17 +2120,35 @@ bool CBitstreamConverter::h264_sequence_header(const uint8_t *data, const uint32
 }
 
 #ifdef HAVE_LIBDOVI
+// ST 2084 (PQ) EOTF: converts a 12-bit RPU code value to display light in nits
+static double pqCodeToNits(uint16_t codeValue)
+{
+  static constexpr double m1 = 2610.0 / 16384.0;
+  static constexpr double m2 = 2523.0 / 4096.0 * 128.0;
+  static constexpr double c1 = 3424.0 / 4096.0;
+  static constexpr double c2 = 2413.0 / 4096.0 * 32.0;
+  static constexpr double c3 = 2392.0 / 4096.0 * 32.0;
+
+  const double ep = codeValue / 4095.0;
+  const double epPowInvM2 = std::pow(ep, 1.0 / m2);
+  const double num = std::max(epPowInvM2 - c1, 0.0);
+  const double den = c2 - c3 * epPowInvM2;
+  return 10000.0 * std::pow(num / den, 1.0 / m1);
+}
+
 // Processes Dolby Vision RPU
 //   - Sets `m_doviIsFEL` flag to true when DV is profile 7 / FEL
 //   - Converts to profile 8.1 if `m_convert_dovi` is enabled
 //   - Sets level 5 metadata to 0 offsets if `m_setDoviZeroLevel5` is enabled
+//   - Strips or adds CMv4.0 metadata per `m_doviCmv40Action`
 //
 // The returned data must be freed with `dovi_data_free`
 // May be NULL if no processing was done or if parsing errored
 const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSize)
 {
   // early exit if no processing option is enabled and EL type is alredy tested
-  if (m_doviELTested && !m_convert_dovi && !m_setDoviZeroLevel5)
+  if (m_doviELTested && !m_convert_dovi && !m_setDoviZeroLevel5 &&
+      m_doviCmv40Action == DoviCmv40Action::OFF)
     return NULL;
 
   DoviRpuOpaque* rpu = dovi_parse_unspec62_nalu(buf, nalSize);
@@ -2165,6 +2184,74 @@ const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSi
   {
     ret = dovi_rpu_set_active_area_offsets(rpu, 0, 0, 0, 0);
     processed = true;
+  }
+
+  if (ret == 0 && m_doviCmv40Action == DoviCmv40Action::STRIP)
+  {
+    ret = dovi_rpu_remove_cmv40_metadata(rpu);
+    processed = true;
+  }
+  else if (ret == 0 && m_doviCmv40Action == DoviCmv40Action::ADD_DEFAULT)
+  {
+    // returns 1 only when CMv4.0 metadata was actually inserted, 0 if already present
+    int addRet = dovi_rpu_add_cmv40_safe_default_metadata(rpu);
+    if (addRet == 1)
+      processed = true;
+    else if (addRet == -1)
+      ret = addRet;
+  }
+  else if (ret == 0 && m_doviCmv40Action == DoviCmv40Action::ADD_NO_L2)
+  {
+    const DoviVdrDmData* vdrDmData = dovi_rpu_get_vdr_dm_data(rpu);
+    const bool hasL2Trims = vdrDmData && vdrDmData->dm_data.level2.len > 0;
+    if (vdrDmData)
+      dovi_rpu_free_vdr_dm_data(vdrDmData);
+
+    if (!hasL2Trims)
+    {
+      int addRet = dovi_rpu_add_cmv40_safe_default_metadata(rpu);
+      if (addRet == 1)
+        processed = true;
+      else if (addRet == -1)
+        ret = addRet;
+    }
+  }
+  else if (ret == 0 && m_doviCmv40Action == DoviCmv40Action::ADD_SMART)
+  {
+    const DoviVdrDmData* vdrDmData = dovi_rpu_get_vdr_dm_data(rpu);
+    bool bypass = false;
+
+    // decision uses the current frame's L1 max_pq, not the static source peak
+    if (vdrDmData && vdrDmData->dm_data.level2.len > 0 && m_doviCmv40DisplayNits > 0 &&
+        vdrDmData->dm_data.level1)
+    {
+      const double contentNits = pqCodeToNits(vdrDmData->dm_data.level1->max_pq);
+      const double thresholdNits = m_doviCmv40DisplayNits * (100 + m_doviCmv40ThresholdPct) / 100.0;
+      bypass = contentNits > thresholdNits;
+
+      if (!m_doviCmv40SmartTested || bypass != m_doviCmv40SmartBypass)
+        CLog::Log(LOGDEBUG, LOGVIDEO, "CBitstreamConverter::processDoviRpu: CMv4.0 smart {} (content {:.0f} nits, display {:d} nits, threshold {:.0f} nits)",
+          bypass ? "bypass" : "append", contentNits, m_doviCmv40DisplayNits, thresholdNits);
+    }
+    else if (!m_doviCmv40SmartTested || m_doviCmv40SmartBypass)
+    {
+      CLog::Log(LOGDEBUG, LOGVIDEO, "CBitstreamConverter::processDoviRpu: CMv4.0 smart append (no L2 trims or L1 metadata absent)");
+    }
+
+    m_doviCmv40SmartBypass = bypass;
+    m_doviCmv40SmartTested = true;
+
+    if (vdrDmData)
+      dovi_rpu_free_vdr_dm_data(vdrDmData);
+
+    if (!bypass)
+    {
+      int addRet = dovi_rpu_add_cmv40_safe_default_metadata(rpu);
+      if (addRet == 1)
+        processed = true;
+      else if (addRet == -1)
+        ret = addRet;
+    }
   }
 
   if (ret == 0 && processed)

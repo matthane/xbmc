@@ -95,6 +95,15 @@ public:
   static bool CanStartDecode(const uint8_t* buf, int buf_size);
 };
 
+enum class DoviCmv40Action
+{
+  OFF = 0,
+  STRIP,
+  ADD_DEFAULT,
+  ADD_NO_L2,
+  ADD_SMART
+};
+
 class CBitstreamConverter
 {
 public:
@@ -117,6 +126,13 @@ public:
   void SetRemoveDovi(bool value) { m_removeDovi = value; }
   void SetRemoveHdr10Plus(bool value) { m_removeHdr10Plus = value; }
   void SetDoviZeroLevel5(bool value) { m_setDoviZeroLevel5 = value; }
+  void SetDoviCmv40Action(int value)
+  {
+    m_doviCmv40Action = (value >= 0 && value <= 4) ? static_cast<DoviCmv40Action>(value)
+                                                     : DoviCmv40Action::OFF;
+  }
+  void SetDoviCmv40DisplayNits(int value) { m_doviCmv40DisplayNits = value; }
+  void SetDoviCmv40ThresholdPct(int value) { m_doviCmv40ThresholdPct = value; }
   bool GetDoviIsFEL() const { return m_doviIsFEL; }
   bool GetIsHdrPlus() const { return m_IsHdr10Plus; }
 
@@ -183,6 +199,11 @@ protected:
   bool m_removeDovi;
   bool m_removeHdr10Plus;
   bool m_setDoviZeroLevel5;
+  DoviCmv40Action m_doviCmv40Action{DoviCmv40Action::OFF};
+  int m_doviCmv40DisplayNits{0};
+  int m_doviCmv40ThresholdPct{20};
+  bool m_doviCmv40SmartBypass{false};
+  bool m_doviCmv40SmartTested{false};
   bool m_doviIsFEL{false};
   bool m_doviELTested{false};
   bool m_IsHdr10Plus{false};

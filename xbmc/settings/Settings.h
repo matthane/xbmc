@@ -472,6 +472,9 @@ public:
   static constexpr auto SETTING_COREELEC_AMLOGIC_DISABLEGUISCALING = "coreelec.amlogic.disableguiscaling";
   static constexpr auto SETTING_COREELEC_AMLOGIC_DV_DISABLE = "coreelec.amlogic.disabledolbyvision";
   static constexpr auto SETTING_COREELEC_AMLOGIC_DV_LED = "coreelec.amlogic.dolbyvisionled";
+  static constexpr auto SETTING_COREELEC_AMLOGIC_DV_CMV40 = "coreelec.amlogic.dolbyvisioncmv40";
+  static constexpr auto SETTING_COREELEC_AMLOGIC_DV_CMV40_THRESHOLD = "coreelec.amlogic.dolbyvisioncmv40threshold";
+  static constexpr auto SETTING_COREELEC_AMLOGIC_DV_CMV40_NITS = "coreelec.amlogic.dolbyvisioncmv40nits";
   static constexpr auto SETTING_CACHE_HARDDISK = "cache.harddisk";
   static constexpr auto SETTING_CACHEVIDEO_DVDROM = "cachevideo.dvdrom";
   static constexpr auto SETTING_CACHEVIDEO_LAN = "cachevideo.lan";
