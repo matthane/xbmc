@@ -188,6 +188,9 @@ void CWinSystemAmlogic::HotplugEvent()
       mode_count);
     return;
   }
+
+  UpdateHDRCapabilities();
+
   std::string preferred_mode = m_amlDisplay->aml_get_preferred_mode();
   RESOLUTION res = static_cast<RESOLUTION>(RES_DESKTOP);
 
@@ -210,6 +213,7 @@ void CWinSystemAmlogic::HotplugEvent()
     CLog::Log(LOGDEBUG, "CWinSystemAmlogic - HotplugEvent, preferred mode: {}, display mode: {}",
       preferred_mode, CDisplaySettings::GetInstance().GetResolutionInfo(res).strId);
   }
+  else
     CLog::Log(LOGWARNING, "CWinSystemAmlogic - HotplugEvent, no preferred mode defined, use display mode: {}",
       CDisplaySettings::GetInstance().GetResolutionInfo(res).strId);
 
@@ -358,6 +362,8 @@ bool CWinSystemAmlogic::InitWindowSystem()
     }
   }
 
+  UpdateHDRCapabilities();
+
   MonitorStart();
 
   // kill a running animation
@@ -401,7 +407,6 @@ bool CWinSystemAmlogic::CreateNewWindow(const std::string& name,
   if ((ret = m_amlDisplay->set_native_resolution(res, m_framebuffer_name, m_stereo_mode,
                                            m_force_mode_switch, m_hotplug_mode_switch)))
   {
-    m_hdr_caps_initialized = false;
     m_bWindowCreated = true;
   }
 
@@ -464,40 +469,42 @@ void CWinSystemAmlogic::UpdateResolutions()
   RefreshResolutions();
 }
 
-bool CWinSystemAmlogic::IsHDRDisplay()
+void CWinSystemAmlogic::UpdateHDRCapabilities()
 {
-  if (!m_hdr_caps_initialized)
+  // built locally so a stream opening during the update cannot see empty caps
+  CHDRCapabilities caps;
+  CSysfsPath hdr_cap{"/sys/class/amhdmitx/amhdmitx0/hdr_cap"};
+  CSysfsPath dv_cap{"/sys/class/amhdmitx/amhdmitx0/dv_cap"};
+  std::string valstr;
+
+  if (hdr_cap.Exists())
   {
-    CSysfsPath hdr_cap{"/sys/class/amhdmitx/amhdmitx0/hdr_cap"};
-    CSysfsPath dv_cap{"/sys/class/amhdmitx/amhdmitx0/dv_cap"};
-    std::string valstr;
+    valstr = hdr_cap.Get<std::string>().value();
+    if (valstr.find("Traditional HDR: 1") != std::string::npos ||
+        valstr.find("SMPTE ST 2084: 1") != std::string::npos)
+      caps.SetHDR10();
 
-    if (hdr_cap.Exists())
-    {
-      valstr = hdr_cap.Get<std::string>().value();
-      if (valstr.find("Traditional HDR: 1") != std::string::npos ||
-          valstr.find("SMPTE ST 2084: 1") != std::string::npos)
-        m_hdr_caps.SetHDR10();
+    if (valstr.find("HDR10Plus Supported: 1") != std::string::npos)
+      caps.SetHDR10Plus();
 
-      if (valstr.find("HDR10Plus Supported: 1") != std::string::npos)
-        m_hdr_caps.SetHDR10Plus();
-
-      if (valstr.find("Hybrid Log-Gamma: 1") != std::string::npos)
-        m_hdr_caps.SetHLG();
-    }
-
-    if (dv_cap.Exists())
-    {
-      valstr = dv_cap.Get<std::string>().value();
-      if (valstr.find("2160p30hz: 1") != std::string::npos)
-        m_hdr_caps.SetDolbyVision();
-      else if (valstr.find("2160p60hz: 1") != std::string::npos)
-        m_hdr_caps.SetDolbyVision4k60();
-    }
-
-    m_hdr_caps_initialized = true;
+    if (valstr.find("Hybrid Log-Gamma: 1") != std::string::npos)
+      caps.SetHLG();
   }
 
+  if (dv_cap.Exists())
+  {
+    valstr = dv_cap.Get<std::string>().value();
+    if (valstr.find("2160p30hz: 1") != std::string::npos)
+      caps.SetDolbyVision();
+    else if (valstr.find("2160p60hz: 1") != std::string::npos)
+      caps.SetDolbyVision4k60();
+  }
+
+  m_hdr_caps = caps;
+}
+
+bool CWinSystemAmlogic::IsHDRDisplay()
+{
   return (m_hdr_caps.SupportsHDR10() | m_hdr_caps.SupportsHDR10Plus() | m_hdr_caps.SupportsHLG() |
          (m_hdr_caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE));
 }
