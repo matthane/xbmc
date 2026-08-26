@@ -277,7 +277,7 @@ bool CWinSystemAmlogic::InitWindowSystem()
     CSysfsPath("/sys/module/aml_media/parameters/hdr_mode", 1);
   }
 
-  if (!aml_support_dolby_vision() || !aml_display_support_dv())
+  if (!aml_support_dolby_vision())
   {
     auto setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE);
     if (setting)
@@ -322,7 +322,8 @@ bool CWinSystemAmlogic::InitWindowSystem()
     if (old_value == AML_DV_PLAYER_LED && !(dv_cap & LL_YCbCr_422_12BIT))
       new_value = static_cast<AML_DISPLAY_DV_LED>((dv_cap & DV_RGB_444_8BIT) != 0 ? AML_DV_TV_LED : -1);
 
-    if (new_value != old_value)
+    // a sink offering neither DV mode leaves the stored mode alone
+    if (new_value != old_value && new_value != -1)
       settings->SetInt(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED, new_value);
   }
 
@@ -499,6 +500,11 @@ void CWinSystemAmlogic::UpdateHDRCapabilities()
     else if (valstr.find("2160p60hz: 1") != std::string::npos)
       caps.SetDolbyVision4k60();
   }
+
+  // the kernel prints a 2160p mode line set to 1 for every sink it accepts for DV,
+  // so the parsed type doubles as the display verdict
+  const bool dv_supported = caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE;
+  aml_set_display_support_dv(dv_supported);
 
   m_hdr_caps = caps;
 }

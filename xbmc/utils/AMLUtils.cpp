@@ -6,6 +6,7 @@
  *  See LICENSES/README.md for more information.
  */
 
+#include <atomic>
 #include <fcntl.h>
 #include <regex>
 #include <string.h>
@@ -107,24 +108,20 @@ bool aml_display_is_widescreen()
   return is_widescreen;
 }
 
+namespace
+{
+// verdict is kept live by CWinSystemAmlogic::UpdateHDRCapabilities on init and hotplug
+std::atomic<bool> display_support_dv{false};
+}
+
+void aml_set_display_support_dv(bool support)
+{
+  display_support_dv = support;
+}
+
 bool aml_display_support_dv()
 {
-  static int support_dv = -1;
-
-  if (support_dv == -1)
-  {
-    CRegExp regexp;
-    regexp.RegComp("The Rx don't support DolbyVision");
-    std::string valstr;
-    CSysfsPath dv_cap{"/sys/devices/virtual/amhdmitx/amhdmitx0/dv_cap"};
-    if (dv_cap.Exists())
-    {
-      valstr = dv_cap.Get<std::string>().value();
-      support_dv = (regexp.RegFind(valstr) >= 0) ? 0 : 1;
-    }
-  }
-
-  return support_dv;
+  return display_support_dv;
 }
 
 bool aml_display_support_3d()
