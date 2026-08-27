@@ -6,6 +6,7 @@
  *  See LICENSES/README.md for more information.
  */
 
+#include <atomic>
 #include <fcntl.h>
 #include <regex>
 #include <string.h>
@@ -107,24 +108,20 @@ bool aml_display_is_widescreen()
   return is_widescreen;
 }
 
+namespace
+{
+// verdict is kept live by CWinSystemAmlogic::UpdateHDRCapabilities on init and hotplug
+std::atomic<bool> display_support_dv{false};
+}
+
+void aml_set_display_support_dv(bool support)
+{
+  display_support_dv = support;
+}
+
 bool aml_display_support_dv()
 {
-  static int support_dv = -1;
-
-  if (support_dv == -1)
-  {
-    CRegExp regexp;
-    regexp.RegComp("The Rx don't support DolbyVision");
-    std::string valstr;
-    CSysfsPath dv_cap{"/sys/devices/virtual/amhdmitx/amhdmitx0/dv_cap"};
-    if (dv_cap.Exists())
-    {
-      valstr = dv_cap.Get<std::string>().value();
-      support_dv = (regexp.RegFind(valstr) >= 0) ? 0 : 1;
-    }
-  }
-
-  return support_dv;
+  return display_support_dv;
 }
 
 bool aml_display_support_3d()
@@ -291,18 +288,14 @@ bool aml_support_dolby_vision()
 
 bool aml_dolby_vision_enabled()
 {
-  static int dv_enabled = -1;
   bool dv_user_enabled(!CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
+  bool dv_enabled = (aml_support_dolby_vision() && aml_display_support_dv());
 
-  if (dv_enabled == -1)
-    dv_enabled = (!!aml_support_dolby_vision() && !!aml_display_support_dv());
-
-  return ((dv_enabled && !!dv_user_enabled) == 1);
+  return (dv_enabled && dv_user_enabled);
 }
 
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
 {
-  static int convert_to_dv = -1;
   const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
   bool dv_user_enabled(!settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE));
   bool user_convert_to_dv;
@@ -312,10 +305,9 @@ bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
   else
     user_convert_to_dv = settings->GetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
 
-  if (convert_to_dv == -1)
-    convert_to_dv = (!!aml_support_dolby_vision() && !!aml_display_support_dv());
+  bool convert_to_dv = (aml_support_dolby_vision() && aml_display_support_dv());
 
-  return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
+  return (convert_to_dv && user_convert_to_dv && dv_user_enabled);
 }
 
 bool aml_video_started()

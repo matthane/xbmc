@@ -181,15 +181,16 @@ void CWinSystemAmlogic::HotplugEvent()
   m_amlDisplay->aml_init_drmDevice();
   drmModeConnection connection;
   int mode_count = m_amlDisplay->aml_get_display_modes_count(&connection);
+
+  UpdateHDRCapabilities();
+
   if (connection == DRM_MODE_DISCONNECTED && mode_count == 1)
   {
     CLog::Log(LOGWARNING,
-      "CWinSystemAmlogic - HotplugEvent ignored while HDMI DRM connector is not ready ({:d} modes)",
+      "CWinSystemAmlogic - HotplugEvent mode switch ignored while HDMI DRM connector is not ready ({:d} modes)",
       mode_count);
     return;
   }
-
-  UpdateHDRCapabilities();
 
   std::string preferred_mode = m_amlDisplay->aml_get_preferred_mode();
   RESOLUTION res = static_cast<RESOLUTION>(RES_DESKTOP);
@@ -277,34 +278,23 @@ bool CWinSystemAmlogic::InitWindowSystem()
     CSysfsPath("/sys/module/aml_media/parameters/hdr_mode", 1);
   }
 
-  if (!aml_support_dolby_vision() || !aml_display_support_dv())
+  if (!aml_support_dolby_vision())
   {
     auto setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE);
     if (setting)
     {
-      setting->SetVisible(false);
       settings->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE, false);
-      setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV);
-      setting->SetVisible(false);
       settings->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV, false);
-      setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
-      setting->SetVisible(false);
       settings->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV, false);
     }
 
     setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED);
     if (setting)
-    {
-      setting->SetVisible(false);
       settings->SetInt(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED, AML_DV_TV_LED);
-    }
 
     setting = settings->GetSetting(CSettings::SETTING_VIDEOPLAYER_DOVIZEROLEVEL5);
     if (setting)
-    {
-      setting->SetVisible(false);
       settings->SetBool(CSettings::SETTING_VIDEOPLAYER_DOVIZEROLEVEL5, true);
-    }
   }
   else
   {
@@ -322,7 +312,8 @@ bool CWinSystemAmlogic::InitWindowSystem()
     if (old_value == AML_DV_PLAYER_LED && !(dv_cap & LL_YCbCr_422_12BIT))
       new_value = static_cast<AML_DISPLAY_DV_LED>((dv_cap & DV_RGB_444_8BIT) != 0 ? AML_DV_TV_LED : -1);
 
-    if (new_value != old_value)
+    // a sink offering neither DV mode leaves the stored mode alone
+    if (new_value != old_value && new_value != -1)
       settings->SetInt(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED, new_value);
   }
 
@@ -500,7 +491,41 @@ void CWinSystemAmlogic::UpdateHDRCapabilities()
       caps.SetDolbyVision4k60();
   }
 
+  // the kernel prints a 2160p mode line set to 1 for every sink it accepts for DV,
+  // so the parsed type doubles as the display verdict
+  const bool dv_supported = caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE;
+  aml_set_display_support_dv(dv_supported);
+  SetDolbyVisionSettingsVisible(aml_support_dolby_vision() && dv_supported);
+
   m_hdr_caps = caps;
+}
+
+void CWinSystemAmlogic::SetDolbyVisionSettingsVisible(bool visible)
+{
+  const std::shared_ptr<CSettings> settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+
+  // disabledolbyvision, sdr2dv and hdr2dv are chained by enable dependencies,
+  // keep them device-keyed so a disabled row always has its cause on screen
+  const bool device_dv = aml_support_dolby_vision();
+  auto setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE);
+  if (setting)
+    setting->SetVisible(device_dv);
+
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV);
+  if (setting)
+    setting->SetVisible(device_dv);
+
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
+  if (setting)
+    setting->SetVisible(device_dv);
+
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED);
+  if (setting)
+    setting->SetVisible(visible);
+
+  setting = settings->GetSetting(CSettings::SETTING_VIDEOPLAYER_DOVIZEROLEVEL5);
+  if (setting)
+    setting->SetVisible(visible);
 }
 
 bool CWinSystemAmlogic::IsHDRDisplay()

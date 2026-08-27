@@ -89,6 +89,7 @@ private:
   void RefreshResolutions();
   void HotplugEvent();
   void UpdateHDRCapabilities();
+  void SetDolbyVisionSettingsVisible(bool visible);
   static void FDEventCallback(int id, int fd, short revents, void *data);
 
   int m_fdMonitorId;
