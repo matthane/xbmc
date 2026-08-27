@@ -447,32 +447,30 @@ void CWinSystemAmlogic::RefreshDisplayCapabilities()
 
   // disabledolbyvision, sdr2dv and hdr2dv are chained by enable dependencies,
   // keep them device-keyed so a disabled row always has its cause on screen
-  const bool device_dv = aml_support_dolby_vision() && m_amlDisplay->aml_display_support_dv();
+  const bool device_dv = aml_support_dolby_vision();
+  const bool sink_dv = device_dv && m_amlDisplay->aml_display_support_dv();
 
-  CServiceBroker::GetSettingsComponent()
-      ->GetSettings()
-      ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE)
-      ->SetVisible(device_dv);
+  const std::shared_ptr<CSettings> settings = CServiceBroker::GetSettingsComponent()->GetSettings();
 
-  CServiceBroker::GetSettingsComponent()
-      ->GetSettings()
-      ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV)
-      ->SetVisible(device_dv);
+  auto setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE);
+  if (setting)
+    setting->SetVisible(device_dv);
 
-  CServiceBroker::GetSettingsComponent()
-      ->GetSettings()
-      ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV)
-      ->SetVisible(device_dv);
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV);
+  if (setting)
+    setting->SetVisible(device_dv);
 
-  CServiceBroker::GetSettingsComponent()
-      ->GetSettings()
-      ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED)
-      ->SetVisible(device_dv);
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2DV);
+  if (setting)
+    setting->SetVisible(device_dv);
 
-  CServiceBroker::GetSettingsComponent()
-      ->GetSettings()
-      ->GetSetting(CSettings::SETTING_VIDEOPLAYER_DOVIZEROLEVEL5)
-      ->SetVisible(device_dv);
+  setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED);
+  if (setting)
+    setting->SetVisible(sink_dv);
+
+  setting = settings->GetSetting(CSettings::SETTING_VIDEOPLAYER_DOVIZEROLEVEL5);
+  if (setting)
+    setting->SetVisible(sink_dv);
 
   if (IsHDRDisplay())
   {
@@ -508,23 +506,13 @@ void CWinSystemAmlogic::RefreshDisplayCapabilities()
   }
   else
   {
-    CServiceBroker::GetSettingsComponent()
-        ->GetSettings()
-        ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR)
-        ->SetVisible(false);
+    setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR);
+    if (setting)
+      setting->SetVisible(false);
 
-    CServiceBroker::GetSettingsComponent()
-        ->GetSettings()
-        ->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2HDR, false);
-
-    CServiceBroker::GetSettingsComponent()
-        ->GetSettings()
-        ->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR)
-        ->SetVisible(false);
-
-    CServiceBroker::GetSettingsComponent()
-        ->GetSettings()
-        ->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR, false);
+    setting = settings->GetSetting(CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR);
+    if (setting)
+      setting->SetVisible(false);
   }
 }
 
