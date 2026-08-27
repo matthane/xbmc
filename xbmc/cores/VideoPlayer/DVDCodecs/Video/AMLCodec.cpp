@@ -2462,6 +2462,20 @@ void CAMLCodec::CloseDecoder()
     else
       CSysfsPath("/sys/class/amvecm/enable_hdr10plus", 1);
 
+    // the core keeps its last output mode across disable and the OSD keeps
+    // rendering through it, and the store is only honored while enable is set
+    CSysfsPath("/sys/class/amdolby_vision/dv_mode", (AMDV_OUTPUT_MODE_BYPASS + 1) % 6);
+
+    // the transition needs a few display frames before the core powers down
+    CSysfsPath dolby_vision_status{"/sys/module/aml_media/parameters/dolby_vision_status"};
+    if (dolby_vision_status.Exists())
+    {
+      std::chrono::time_point<std::chrono::system_clock> now(std::chrono::system_clock::now());
+      while (dolby_vision_status.Get<int>().value() != 0 &&
+             (std::chrono::system_clock::now() - now) < std::chrono::milliseconds(250))
+        usleep(10000); // wait 10ms
+    }
+
     dolby_vision_enable.Set('N');
   }
 
