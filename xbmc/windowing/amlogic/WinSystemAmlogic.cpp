@@ -198,15 +198,16 @@ void CWinSystemAmlogic::HotplugEvent()
   m_amlDisplay->aml_init_drmDevice();
   drmModeConnection connection;
   int mode_count = m_amlDisplay->aml_get_display_modes_count(&connection);
+
+  RefreshDisplayCapabilities();
+
   if (connection == DRM_MODE_DISCONNECTED && mode_count == 1)
   {
     CLog::Log(LOGWARNING,
-      "CWinSystemAmlogic - HotplugEvent ignored while HDMI DRM connector is not ready ({:d} modes)",
+      "CWinSystemAmlogic - HotplugEvent mode switch ignored while HDMI DRM connector is not ready ({:d} modes)",
       mode_count);
     return;
   }
-
-  RefreshDisplayCapabilities();
 
   std::string preferred_mode = m_amlDisplay->aml_get_preferred_mode();
   RESOLUTION res = static_cast<RESOLUTION>(RES_DESKTOP);
