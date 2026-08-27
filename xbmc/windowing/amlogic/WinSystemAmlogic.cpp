@@ -289,7 +289,7 @@ bool CWinSystemAmlogic::InitWindowSystem()
     CSysfsPath("/sys/module/aml_media/parameters/hdr_policy", 1);
   }
 
-  if (!aml_support_dolby_vision() || !m_amlDisplay->aml_display_support_dv())
+  if (!aml_support_dolby_vision())
   {
     settings->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE, false);
     settings->SetBool(CSettings::SETTING_COREELEC_AMLOGIC_SDR2DV, false);
