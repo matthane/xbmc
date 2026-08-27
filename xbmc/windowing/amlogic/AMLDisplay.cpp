@@ -872,6 +872,13 @@ void CAMLDisplay::aml_refresh_display_caps()
   int hdr_cap = m_amlDRMUtils->aml_get_drmProperty("hdr_cap", DRM_MODE_OBJECT_CONNECTOR);
   int dv_cap = m_amlDRMUtils->aml_get_drmProperty("dv_cap", DRM_MODE_OBJECT_CONNECTOR);
 
+  // a failed read returns -1 and would report every capability as supported
+  if (hdr_cap < 0)
+    hdr_cap = 0;
+
+  if (dv_cap < 0)
+    dv_cap = 0;
+
   if (hdr_cap & (HDR10_CAP | SMPTE_ST_2084_CAP))
     caps.SetHDR10();
 
