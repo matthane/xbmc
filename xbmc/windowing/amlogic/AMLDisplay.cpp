@@ -261,10 +261,14 @@ void CAMLDRMUtils::aml_init_drmDevice()
 
   for (int i = 0; i < m_resources->count_connectors; i++)
   {
-    m_connector = drmModeGetConnector(m_fd, m_resources->connectors[i]);
+    drmModeConnector *connector = drmModeGetConnector(m_fd, m_resources->connectors[i]);
 
-    if (m_connector == NULL)
+    if (connector == NULL)
       continue;
+
+    if (m_connector)
+      drmModeFreeConnector(m_connector);
+    m_connector = connector;
 
     // connector state as always connected but encoder_id == 0 if not connected
     m_connection = (m_connector->encoder_id ? DRM_MODE_CONNECTED : DRM_MODE_DISCONNECTED);
