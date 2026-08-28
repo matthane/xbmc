@@ -4,6 +4,7 @@
  *  SPDX-License-Identifier: GPL-2.0-or-later
  *  See LICENSES/README.md for more information.
  */
+#include <cstring>
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -19,9 +20,36 @@
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/AMLUtils.h"
+#include "utils/DoviVsvdb.h"
 #include "utils/log.h"
 #include "utils/RegExp.h"
 #include "windowing/GraphicContext.h"
+
+namespace
+{
+std::optional<DoviVsvdbInfo> aml_read_dv_vsvdb()
+{
+  CSysfsPath dv_cap{"/sys/class/amhdmitx/amhdmitx0/dv_cap"};
+  if (!dv_cap.Exists())
+    return std::nullopt;
+
+  std::optional<std::string> valstr = dv_cap.Get<std::string>();
+  if (!valstr.has_value())
+    return std::nullopt;
+
+  // the kernel appends this as the last line, contiguous lowercase hex with
+  // no separators, starting at the CTA tag byte
+  size_t pos = valstr->find("VSVDB: ");
+  if (pos == std::string::npos)
+    return std::nullopt;
+
+  std::string hexstr = valstr->substr(pos + strlen("VSVDB: "));
+  hexstr = hexstr.substr(0, hexstr.find('\n'));
+  StringUtils::TrimRight(hexstr);
+
+  return CDoviVsvdb::Decode(hexstr);
+}
+} // unnamed namespace
 
 void FbDestroyCallback(gbm_bo* bo, void* data)
 {
@@ -900,7 +928,28 @@ void CAMLDisplay::aml_refresh_display_caps()
   if (dv_cap & LL_YCbCr_422_12BIT)
     caps.SetDolbyVisionPlayerLED();
 
+  auto dv_vsvdb = aml_read_dv_vsvdb();
+  std::string dv_vsvdb_json;
+  if (dv_vsvdb)
+  {
+    std::string lldv = "n/a";
+    if (dv_vsvdb->interfaceBits)
+      lldv = std::to_string(*dv_vsvdb->interfaceBits);
+    else if (dv_vsvdb->lowLatency)
+      lldv = *dv_vsvdb->lowLatency ? "yes" : "no";
+
+    CLog::Log(LOGINFO,
+      "CAMLDisplay::{}: VSVDB v{} peak {:.1f} nits, min {:.6f} nits, LLDV {}",
+      __FUNCTION__, dv_vsvdb->version, dv_vsvdb->maxNits, dv_vsvdb->minNits, lldv);
+    caps.SetDolbyVisionPeakNits(dv_vsvdb->maxNits);
+    dv_vsvdb_json = CDoviVsvdb::ToJson(*dv_vsvdb);
+  }
+  else
+    CLog::Log(LOGDEBUG, "CAMLDisplay::{}: no VSVDB decoded from /sys/class/amhdmitx/amhdmitx0/dv_cap",
+      __FUNCTION__);
+
   m_hdr_caps = caps;
+  m_dv_vsvdb_json = dv_vsvdb_json;
 
   // refresh display widescreen
   bool is_widescreen = true;

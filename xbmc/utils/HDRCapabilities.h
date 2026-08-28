@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <optional>
+
 enum class DolbyVisionFormat
 {
   DOLBYVISION_TYPE_NONE,
@@ -27,6 +29,7 @@ public:
   DolbyVisionFormat SupportsDolbyVision() const { return m_dolby_vision; }
   bool SupportsDVTVLED() const { return m_dv_tv_led_mode; }
   bool SupportsDVPlayerLED() const { return m_dv_player_led_mode; }
+  std::optional<double> GetDolbyVisionPeakNits() const { return m_dolby_vision_peak_nits; }
 
   void SetHDR10() { m_hdr10 = true; }
   void SetHLG() { m_hlg = true; }
@@ -35,6 +38,7 @@ public:
   void SetDolbyVision4k60() { m_dolby_vision = DolbyVisionFormat::DOLBYVISION_TYPE_4K60; }
   void SetDolbyVisionTVLED() { m_dv_tv_led_mode = true; }
   void SetDolbyVisionPlayerLED() { m_dv_player_led_mode = true; }
+  void SetDolbyVisionPeakNits(double nits) { m_dolby_vision_peak_nits = nits; }
 
 private:
   bool m_hdr10 = false;
@@ -43,4 +47,5 @@ private:
   DolbyVisionFormat m_dolby_vision = DolbyVisionFormat::DOLBYVISION_TYPE_NONE;
   bool m_dv_tv_led_mode = false;
   bool m_dv_player_led_mode = false;
+  std::optional<double> m_dolby_vision_peak_nits{};
 };

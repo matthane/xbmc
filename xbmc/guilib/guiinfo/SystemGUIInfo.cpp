@@ -357,6 +357,9 @@ bool CSystemGUIInfo::GetLabel(std::string& value,
           types += ", Dolby Vision up to 4k30Hz";
         if (caps.SupportsDolbyVision() == DolbyVisionFormat::DOLBYVISION_TYPE_4K60)
           types += ", Dolby Vision up to 4k60Hz";
+        const auto peakNits = caps.GetDolbyVisionPeakNits();
+        if (caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE && peakNits)
+          types += " (" + StringUtils::Format("{:.0f}", *peakNits) + " nits)";
 
         value = types;
       }

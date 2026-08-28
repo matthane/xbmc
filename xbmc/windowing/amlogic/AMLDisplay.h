@@ -166,6 +166,7 @@ public:
   void SetHotPlug() { m_bHotPlug = true; }
 
   CHDRCapabilities GetHDRCaps() const { return m_hdr_caps; }
+  const std::string& GetDoviVsvdbJson() const { return m_dv_vsvdb_json; }
   bool aml_display_support_dv() const
     { return m_hdr_caps.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE; }
   bool aml_display_support_3d() const { return m_support_3d; }
@@ -175,6 +176,7 @@ private:
   bool m_bHotPlug = false;
   RenderStereoMode m_stereo_mode;
   CHDRCapabilities m_hdr_caps;
+  std::string m_dv_vsvdb_json;
   bool m_is_widescreen = false;
   bool m_support_3d = false;
 };
