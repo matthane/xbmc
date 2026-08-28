@@ -15,6 +15,9 @@
 #include "guilib/guiinfo/GUIInfo.h"
 #include "guilib/guiinfo/GUIInfoProvider.h"
 #include "platform/linux/SysfsPath.h"
+#if defined(HAS_LIBAMCODEC)
+#include "windowing/amlogic/WinSystemAmlogic.h"
+#endif // defined(HAS_LIBAMCODEC)
 #include "utils/SystemInfo.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
@@ -60,6 +63,17 @@ public:
         return true;
       case CE_SYSTEM_LINUX_VER:
         value = CSysInfo::GetKernelVersionFull();
+        return true;
+      case CE_SYSTEM_VSVDB:
+#if defined(HAS_LIBAMCODEC)
+        if (const auto* winSystem =
+                dynamic_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem()))
+          value = winSystem->GetAmlDisplay()->GetDoviVsvdbJson();
+        else
+          value = "";
+#else
+        value = "";
+#endif
         return true;
       default:
         return false;
@@ -181,6 +195,7 @@ inline void Register(CGUIInfoManager& infoManager)
   registry.Add("player.process(audiochannelssink)", CE_PLAYER_PROCESS_AUDIOCHANNELS_SINK);
   registry.Add("player.process(video.sidedata)", CE_PLAYER_PROCESS_VIDEO_SIDEDATA);
   registry.Add("system.linuxver", CE_SYSTEM_LINUX_VER);
+  registry.Add("system.vsvdb", CE_SYSTEM_VSVDB);
 
   std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());
   infoManager.GetInfoProviders().RegisterProvider(new CCEPlatformGUIInfo, true);

@@ -19,6 +19,7 @@ set(SOURCES ActorProtocol.cpp
             DatabaseUtils.cpp
             Digest.cpp
             DiscsUtils.cpp
+            DoviVsvdb.cpp
             EndianSwap.cpp
             EmbeddedArt.cpp
             EpisodeUtils.cpp
@@ -104,6 +105,7 @@ set(HEADERS ActorProtocol.h
             DatabaseUtils.h
             Digest.h
             DiscsUtils.h
+            DoviVsvdb.h
             EndianSwap.h
             EpisodeUtils.h
             EventStream.h

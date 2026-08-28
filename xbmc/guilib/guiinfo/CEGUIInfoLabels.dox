@@ -69,5 +69,25 @@ CoreELEC specific info labels, registered through the CoreELEC label registry
     @skinning_v22 **[New Infolabel]** \link Player_Process_video_sidedata `Player.Process(video.sidedata)`\endlink
     <p>
   }
+  \table_row3{   <b>`System.vsvdb`</b>,
+                 \anchor System_vsvdb
+                 _string_,
+    @return The display's decoded Dolby Vision VSVDB (the EDID vendor block) as
+    one JSON object\, empty when the display carries none. `version`\, `dmVersionMajor`\,
+    `maxNits`\, `minNits`\, `globalDimming` and `yuv42212Bit` are always present. Every
+    other field is present only when the VSVDB version on this display carries it:
+    `dmVersionMinor` (version 0)\, `maxCodeRaw`/`minCodeRaw`
+    (versions 1 and 2)\, `maxPqCodeword`/`minPqCodeword` (versions 0 and 2)\,
+    `interfaceBits` (version 2\, the LLDV capability bits)\, `colorimetryP3D65`
+    (version 1)\, `lowLatency` (version 1 compact only)\, `sup2160p60`
+    (versions 0 and 1)\, `sup10b12b444`\, `backlightControl` and
+    `backlightMinLumaNits` (version 2).
+    `primaries` is a nested object with `rx`\, `ry`\, `gx`\, `gy`\, `bx`\, `by`\,
+    plus `wx`/`wy` on version 0. Reflects display capability\, valid outside
+    playback.
+    <p><hr>
+    @skinning_v22 **[New Infolabel]** \link System_vsvdb `System.vsvdb`\endlink
+    <p>
+  }
 \table_end
 */
