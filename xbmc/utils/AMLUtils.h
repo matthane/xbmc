@@ -22,6 +22,17 @@ enum AML_DISPLAY_DV_LED
   AML_DV_PLAYER_LED
 };
 
+#define AMDV_FOLLOW_SINK        (unsigned int)(0)
+#define AMDV_FOLLOW_SOURCE      (unsigned int)(1)
+#define AMDV_FORCE_OUTPUT_MODE  (unsigned int)(2)
+
+#define AMDV_OUTPUT_MODE_IPT         (unsigned int)(0)
+#define AMDV_OUTPUT_MODE_IPT_TUNNEL  (unsigned int)(1)
+#define AMDV_OUTPUT_MODE_HDR10       (unsigned int)(2)
+#define AMDV_OUTPUT_MODE_SDR10       (unsigned int)(3)
+#define AMDV_OUTPUT_MODE_SDR8        (unsigned int)(4)
+#define AMDV_OUTPUT_MODE_BYPASS      (unsigned int)(5)
+
 #define HDR10_PLUS_CAP      (int)(1<<0)
 #define HDR10_CAP           (int)(1<<2)
 #define SMPTE_ST_2084_CAP   (int)(1<<3)

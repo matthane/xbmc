@@ -289,14 +289,6 @@ typedef struct hdr_buf {
 #define DOLBY_VISION_LL_DISABLE (unsigned int)(0)
 #define DOLBY_VISION_LL_YUV422  (unsigned int)(1)
 
-#define AMDV_FOLLOW_SINK        (unsigned int)(0)
-#define AMDV_FOLLOW_SOURCE      (unsigned int)(1)
-#define AMDV_FORCE_OUTPUT_MODE  (unsigned int)(2)
-
-#define AMDV_OUTPUT_MODE_IPT         (unsigned int)(0)
-#define AMDV_OUTPUT_MODE_IPT_TUNNEL  (unsigned int)(1)
-#define AMDV_OUTPUT_MODE_BYPASS      (unsigned int)(5)
-
 typedef struct am_packet {
     AVPacket      avpkt;
     uint64_t      avpts;
