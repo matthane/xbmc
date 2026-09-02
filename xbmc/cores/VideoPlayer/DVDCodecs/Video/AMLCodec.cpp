@@ -286,8 +286,6 @@ typedef struct hdr_buf {
     int size;
 } hdr_buf_t;
 
-#define DOLBY_VISION_LL_DISABLE (unsigned int)(0)
-#define DOLBY_VISION_LL_YUV422  (unsigned int)(1)
 
 typedef struct am_packet {
     AVPacket      avpkt;
@@ -2469,6 +2467,7 @@ void CAMLCodec::CloseDecoder()
       AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 1);
 
     AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
+    aml_dv_restore_vs10_wire();
   }
 
   AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_fel 0");

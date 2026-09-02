@@ -360,6 +360,11 @@ constexpr const int ACTION_SET_RATING = 164;
 
 constexpr const int ACTION_PREV_SUBTITLE = 165;
 
+constexpr const int ACTION_VS10_ORIGINAL = 166; //!< set VS10 output mode to source passthrough
+constexpr const int ACTION_VS10_SDR = 167; //!< set VS10 output mode to SDR10
+constexpr const int ACTION_VS10_HDR10 = 168; //!< set VS10 output mode to HDR10
+constexpr const int ACTION_VS10_DV = 169; //!< set VS10 output mode to Dolby Vision
+
 constexpr const int ACTION_RECORD = 170;
 
 constexpr const int ACTION_PASTE = 180;

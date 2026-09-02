@@ -255,6 +255,165 @@ bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
   return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
 }
 
+
+unsigned int aml_dv_resolve_tunnel_mode(unsigned int mode)
+{
+  // a TV led display expects the standard Dolby Vision tunnel signal
+  if (mode == AMDV_OUTPUT_MODE_IPT &&
+      CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+          CSettings::SETTING_COREELEC_AMLOGIC_DV_LED) != AML_DV_PLAYER_LED)
+    return AMDV_OUTPUT_MODE_IPT_TUNNEL;
+
+  return mode;
+}
+
+// wire attr the GUI ran on before a vs10 action engaged a conversion
+// vs10 conversion engaged by an action, consulted at the stream open fake point
+static bool s_vs10_conversion_active = false;
+
+bool aml_dv_vs10_conversion_active(void)
+{
+  return s_vs10_conversion_active;
+}
+
+static void aml_dv_set_vs10_conversion(bool active)
+{
+  s_vs10_conversion_active = active;
+}
+
+static int s_vs10_gui_color_space = -1;
+static int s_vs10_gui_color_depth = -1;
+static void aml_dv_write_wire_attr(CAMLDisplay* AmlDisplay, unsigned int mode)
+{
+  unsigned int color_space;
+  unsigned int color_depth;
+
+  switch (mode)
+  {
+    case AMDV_OUTPUT_MODE_IPT:
+      color_space = AML_HDMI_CS_YUV422;
+      color_depth = 12;
+      break;
+    case AMDV_OUTPUT_MODE_IPT_TUNNEL:
+      color_space = AML_HDMI_CS_RGB;
+      color_depth = 8;
+      break;
+    case AMDV_OUTPUT_MODE_HDR10:
+      color_space = AML_HDMI_CS_YUV444;
+      color_depth = 10;
+      break;
+    default:
+      color_space = AML_HDMI_CS_YUV444;
+      color_depth = 8;
+      break;
+  }
+
+  // color_space stores the format, the color_depth write re-applies it
+  AmlDisplay->aml_set_drmProperty("color_space", DRM_MODE_OBJECT_CONNECTOR, color_space);
+  AmlDisplay->aml_set_drmProperty("color_depth", DRM_MODE_OBJECT_CONNECTOR, color_depth);
+}
+
+void aml_dv_vs10_request_conversion(void)
+{
+  if (!aml_support_dolby_vision() ||
+      CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+          CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE))
+    return;
+
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+
+  aml_dv_set_vs10_conversion(true);
+  if (s_vs10_gui_color_space < 0)
+  {
+    s_vs10_gui_color_space =
+        AmlDisplay->aml_get_drmProperty("color_space", DRM_MODE_OBJECT_CONNECTOR);
+    s_vs10_gui_color_depth =
+        AmlDisplay->aml_get_drmProperty("color_depth", DRM_MODE_OBJECT_CONNECTOR);
+  }
+
+  // the decoder open writes the engine state, only the wire is ours
+  aml_dv_write_wire_attr(AmlDisplay,
+                         aml_dv_resolve_tunnel_mode(AMDV_OUTPUT_MODE_IPT));
+}
+
+void aml_dv_vs10_drop_conversion(void)
+{
+  // the decoder close parks the engine and restores the wire
+  aml_dv_set_vs10_conversion(false);
+}
+
+
+void aml_dv_restore_vs10_wire(void)
+{
+  if (s_vs10_gui_color_space < 0)
+    return;
+
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  AmlDisplay->aml_set_drmProperty("color_space", DRM_MODE_OBJECT_CONNECTOR,
+                                  s_vs10_gui_color_space);
+  AmlDisplay->aml_set_drmProperty("color_depth", DRM_MODE_OBJECT_CONNECTOR,
+                                  s_vs10_gui_color_depth);
+  s_vs10_gui_color_space = -1;
+  s_vs10_gui_color_depth = -1;
+}
+
+void aml_dv_set_vs10_mode(unsigned int mode, bool native_dv)
+{
+  if (!aml_support_dolby_vision() ||
+      CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+          CSettings::SETTING_COREELEC_AMLOGIC_DV_DISABLE))
+    return;
+  mode = aml_dv_resolve_tunnel_mode(mode);
+
+  auto* AmlDisplay =
+      static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->GetAmlDisplay();
+  if (mode == AMDV_OUTPUT_MODE_BYPASS)
+  {
+    aml_dv_set_vs10_conversion(false);
+    AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC,
+                                    AMDV_OUTPUT_MODE_BYPASS);
+    if (AmlDisplay->aml_get_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC) ==
+        AMDV_FORCE_OUTPUT_MODE)
+    {
+      AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FOLLOW_SOURCE);
+      // a native Dolby Vision stream needs the engine even in bypass
+      if (!native_dv)
+      {
+        AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
+        aml_dv_restore_vs10_wire();
+      }
+    }
+    if (native_dv)
+      aml_dv_write_wire_attr(AmlDisplay, AMDV_OUTPUT_MODE_IPT);
+    CLog::Log(LOGINFO, "aml_dv_set_vs10_mode VS10 bypass (follow source)");
+  }
+  else
+  {
+    aml_dv_set_vs10_conversion(true);
+    if (s_vs10_gui_color_space < 0)
+    {
+      s_vs10_gui_color_space =
+          AmlDisplay->aml_get_drmProperty("color_space", DRM_MODE_OBJECT_CONNECTOR);
+      s_vs10_gui_color_depth =
+          AmlDisplay->aml_get_drmProperty("color_depth", DRM_MODE_OBJECT_CONNECTOR);
+    }
+
+    // re-apply the wire before the engine engages
+    aml_dv_write_wire_attr(AmlDisplay, mode);
+
+    AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 1);
+    // the low latency policy must match the output mode wire format
+    AmlDisplay->aml_set_drmProperty("dv_ll_policy", DRM_MODE_OBJECT_CRTC,
+                                    mode == AMDV_OUTPUT_MODE_IPT ? DOLBY_VISION_LL_YUV422
+                                                                 : DOLBY_VISION_LL_DISABLE);
+    AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FORCE_OUTPUT_MODE);
+    AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC, mode);
+    CLog::Log(LOGINFO, "aml_dv_set_vs10_mode VS10 output mode {:d}", mode);
+  }
+}
+
 bool aml_video_started()
 {
   CSysfsPath videostarted{"/sys/class/tsync/videostarted"};
