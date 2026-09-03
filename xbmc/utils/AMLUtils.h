@@ -22,6 +22,24 @@ enum AML_DISPLAY_DV_LED
   AML_DV_PLAYER_LED
 };
 
+#define AMDV_FOLLOW_SINK        (unsigned int)(0)
+#define AMDV_FOLLOW_SOURCE      (unsigned int)(1)
+#define AMDV_FORCE_OUTPUT_MODE  (unsigned int)(2)
+
+#define AMDV_OUTPUT_MODE_IPT         (unsigned int)(0)
+#define AMDV_OUTPUT_MODE_IPT_TUNNEL  (unsigned int)(1)
+#define AMDV_OUTPUT_MODE_HDR10       (unsigned int)(2)
+#define AMDV_OUTPUT_MODE_SDR10       (unsigned int)(3)
+#define AMDV_OUTPUT_MODE_SDR8        (unsigned int)(4)
+#define AMDV_OUTPUT_MODE_BYPASS      (unsigned int)(5)
+
+#define DOLBY_VISION_LL_DISABLE (unsigned int)(0)
+#define DOLBY_VISION_LL_YUV422  (unsigned int)(1)
+
+#define AML_HDMI_CS_RGB         (unsigned int)(0)
+#define AML_HDMI_CS_YUV422      (unsigned int)(1)
+#define AML_HDMI_CS_YUV444      (unsigned int)(2)
+
 #define HDR10_PLUS_CAP      (int)(1<<0)
 #define HDR10_CAP           (int)(1<<2)
 #define SMPTE_ST_2084_CAP   (int)(1<<3)
@@ -59,7 +77,13 @@ bool aml_support_avs2();
 bool aml_support_avs3();
 bool aml_support_dolby_vision();
 bool aml_dolby_vision_enabled();
+void aml_dv_restore_vs10_wire(void);
+void aml_dv_set_vs10_mode(unsigned int mode, bool native_dv = false);
 bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType);
 bool aml_video_started();
 int aml_amdv_wait(StreamHdrType hdrType);
+unsigned int aml_dv_resolve_tunnel_mode(unsigned int mode);
+bool aml_dv_vs10_conversion_active(void);
+void aml_dv_vs10_request_conversion(void);
+void aml_dv_vs10_drop_conversion(void);
 void aml_set_3d_video_mode(unsigned int mode, bool framepacking_support, int view_mode);

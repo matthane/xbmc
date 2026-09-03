@@ -3042,6 +3042,10 @@ void CVideoPlayer::OnExit()
 {
   CLog::Log(LOGINFO, "CVideoPlayer::OnExit()");
 
+  // a conversion left armed by an action can never be disarmed if playback
+  // ends before the matching bypass action, drop it with the player
+  aml_dv_vs10_drop_conversion();
+
   // set event to inform openfile something went wrong in case openfile is still waiting for this event
   SetCaching(CACHESTATE_DONE);
 
@@ -4383,7 +4387,8 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
       break;
     case StreamType::VIDEO:
       // fake Dolby Vision type when using Dolby Vision VS-Engine
-      if (aml_convert_to_dv_by_vs_engine(hint.hdrType))
+      if (aml_convert_to_dv_by_vs_engine(hint.hdrType) ||
+          aml_dv_vs10_conversion_active())
         hint.hdrType = StreamHdrType::HDR_TYPE_DOLBYVISION;
       res = OpenVideoStream(hint, reset);
       // Set the m_bFullScreenVideo flag now, before streamsReady, so the
@@ -5359,6 +5364,38 @@ bool CVideoPlayer::OnAction(const CAction &action)
 
     case ACTION_PLAYER_PROCESS_INFO:
       CServiceBroker::GetAnnouncementManager()->Announce(ANNOUNCEMENT::Player, "OnProcessInfo");
+      return true;
+
+    case ACTION_VS10_ORIGINAL:
+      if (aml_dv_vs10_conversion_active() &&
+          m_CurrentVideo.hint.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION &&
+          m_CurrentVideo.hint.dovi.dv_profile == 0)
+      {
+        // converted stream, reopen without the fake to return to the source
+        aml_dv_vs10_drop_conversion();
+        SetVideoStream(GetVideoStream());
+      }
+      else
+        aml_dv_set_vs10_mode(AMDV_OUTPUT_MODE_BYPASS,
+                             m_CurrentVideo.hint.dovi.dv_profile != 0);
+      return true;
+    case ACTION_VS10_SDR:
+      aml_dv_set_vs10_mode(AMDV_OUTPUT_MODE_SDR10);
+      return true;
+    case ACTION_VS10_HDR10:
+      aml_dv_set_vs10_mode(AMDV_OUTPUT_MODE_HDR10);
+      return true;
+    case ACTION_VS10_DV:
+      if (m_CurrentVideo.id >= 0 &&
+          m_CurrentVideo.hint.hdrType != StreamHdrType::HDR_TYPE_DOLBYVISION)
+      {
+        // a non DV decode cannot feed the engine live, engage at decoder
+        // open through the stock conversion path
+        aml_dv_vs10_request_conversion();
+        SetVideoStream(GetVideoStream());
+      }
+      else
+        aml_dv_set_vs10_mode(AMDV_OUTPUT_MODE_IPT);
       return true;
   }
 

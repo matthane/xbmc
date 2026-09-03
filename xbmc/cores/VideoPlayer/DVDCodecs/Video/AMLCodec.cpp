@@ -286,16 +286,6 @@ typedef struct hdr_buf {
     int size;
 } hdr_buf_t;
 
-#define DOLBY_VISION_LL_DISABLE (unsigned int)(0)
-#define DOLBY_VISION_LL_YUV422  (unsigned int)(1)
-
-#define AMDV_FOLLOW_SINK        (unsigned int)(0)
-#define AMDV_FOLLOW_SOURCE      (unsigned int)(1)
-#define AMDV_FORCE_OUTPUT_MODE  (unsigned int)(2)
-
-#define AMDV_OUTPUT_MODE_IPT         (unsigned int)(0)
-#define AMDV_OUTPUT_MODE_IPT_TUNNEL  (unsigned int)(1)
-#define AMDV_OUTPUT_MODE_BYPASS      (unsigned int)(5)
 
 typedef struct am_packet {
     AVPacket      avpkt;
@@ -2162,10 +2152,10 @@ bool CAMLCodec::OpenDecoder(CDVDStreamInfo &hints, bool doviIsFEL)
       AmlDisplay->aml_set_drmProperty("dv_policy", DRM_MODE_OBJECT_CRTC, AMDV_FORCE_OUTPUT_MODE);
       if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(CSettings::SETTING_COREELEC_AMLOGIC_DV_LED) == AML_DV_PLAYER_LED)
         AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC,
-                                        (AMDV_OUTPUT_MODE_IPT + 1) % 6);
+                                        AMDV_OUTPUT_MODE_IPT);
       else
         AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC,
-                                        (AMDV_OUTPUT_MODE_IPT_TUNNEL + 1) % 6);
+                                        AMDV_OUTPUT_MODE_IPT_TUNNEL);
     }
     else
     {
@@ -2439,7 +2429,7 @@ void CAMLCodec::CloseDecoder()
   // disable Dolby Vision VS-Engine for non DV media
   if (dv_enabled && dolby_vision_policy == AMDV_FORCE_OUTPUT_MODE)
     AmlDisplay->aml_set_drmProperty("dv_mode", DRM_MODE_OBJECT_CRTC,
-                                    (AMDV_OUTPUT_MODE_BYPASS + 1) % 6);
+                                    AMDV_OUTPUT_MODE_BYPASS);
 
   m_dll->codec_close(&am_private->vcodec);
   dumpfile_close(am_private);
@@ -2477,6 +2467,7 @@ void CAMLCodec::CloseDecoder()
       AmlDisplay->aml_set_drmProperty("enable_hdr10plus", DRM_MODE_OBJECT_CRTC, 1);
 
     AmlDisplay->aml_set_drmProperty("dv_enable", DRM_MODE_OBJECT_CRTC, 0);
+    aml_dv_restore_vs10_wire();
   }
 
   AmlDisplay->aml_set_drmProperty("dv_debug", DRM_MODE_OBJECT_CRTC, "enable_fel 0");
