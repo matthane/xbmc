@@ -5,6 +5,7 @@
  *  See LICENSES/README.md for more information.
  */
 
+#include <drm_fourcc.h>
 #include <gbm.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -28,13 +29,40 @@ class CAMLGBMUtils
 {
 public:
   CAMLGBMUtils(int fd);
+  ~CAMLGBMUtils();
   struct gbm_device *GetDevice() const { return m_device.get(); }
   struct gbm_surface *GetSurface() const { return m_surface.get(); }
   bool CreateSurface(int width, int height, uint32_t format);
   uint32_t GetFBId() { return m_drm_fb->fb_id; }
   bool LockFrontBuffer(int fd);
+
+  // OSD2 subtitle plane buffers: a fixed pair of CPU-mapped linear
+  // ARGB8888 scanout buffers the overlay canvas folds into; presentation
+  // is an FB_ID flip riding the per-frame GUI atomic. Allocated via
+  // flags=0 DRM dumb buffers, the kernel dma-heap scanout path
+  bool CreateOsdBuffers(int fd, int width, int height);
+  void DestroyOsdBuffers();
+  void ClearOsdBuffers();
+  bool GetOsdBuffer(int index, void** map, uint32_t* stride, uint32_t* width,
+                    uint32_t* height) const;
+  uint32_t GetOsdFbId(int index) const;
+
 private:
   struct drm_fb* GetFBFromBo(int fd, struct gbm_bo* bo);
+
+  struct OsdBuffer
+  {
+    uint32_t handle{0}; // GEM handle (DRM_IOCTL_MODE_CREATE_DUMB)
+    uint32_t fb_id{0}; // KMS framebuffer (drmModeAddFB2)
+    void* map{nullptr}; // CPU alias (mmap of MAP_DUMB offset)
+    size_t map_size{0};
+    uint32_t stride{0};
+  };
+  OsdBuffer m_osd[2];
+  bool m_osdCreated{false};
+  int m_osdFd{-1};
+  int m_osdW{0};
+  int m_osdH{0};
 
   struct GbmDeviceDeleter
   {
@@ -105,6 +133,15 @@ public:
   bool aml_get_drmDevice_connected() const { return m_connection == DRM_MODE_CONNECTED; }
   void FlipPage(uint32_t fb_id);
 
+  // OSD2 overlay plane - the first non-primary OSD plane (the one the
+  // vendor fbdev exposes as fb1), claimed here and driven as the HDR
+  // subtitle plane: its props ride the per-frame FlipPage atomic while
+  // active, single-writer.
+  bool aml_find_osd_overlay_plane();
+  bool OsdOverlayPlaneValid() const { return m_osd_plane != nullptr; }
+  void SetOsdPlaneActive(uint32_t fb_id, int src_w, int src_h);
+  bool DisableOsdPlane();
+
   void SetInFenceFd(int fd) { if (m_inFenceFd != -1) close(m_inFenceFd); m_inFenceFd = fd; }
   int TakeOutFenceFd()
   {
@@ -140,6 +177,14 @@ private:
   drmModeCrtcPtr m_crtc{nullptr};
   drmModeCrtcPtr m_orig_crtc{nullptr};
   drmModePlanePtr m_plane{nullptr};
+  int m_crtcIdx{-1};
+
+  // OSD2 subtitle plane (see aml_find_osd_overlay_plane)
+  drmModePlanePtr m_osd_plane{nullptr};
+  bool m_osd_active{false};
+  uint32_t m_osd_fb_id{0};
+  int m_osd_src_w{0};
+  int m_osd_src_h{0};
 
   int m_inFenceFd{-1};
   int m_outFenceFd{-1};
@@ -177,6 +222,12 @@ public:
   void aml_set_drmProperty(std::string name, unsigned int obj_type, std::string value)
     { m_amlDRMUtils->aml_set_drmProperty(name, obj_type, value); }
   void FlipPage(uint32_t fb_id) { m_amlDRMUtils->FlipPage(fb_id); }
+  bool OsdOverlayPlaneValid() const { return m_amlDRMUtils->OsdOverlayPlaneValid(); }
+  void SetOsdPlaneActive(uint32_t fb_id, int src_w, int src_h)
+  {
+    m_amlDRMUtils->SetOsdPlaneActive(fb_id, src_w, src_h);
+  }
+  bool DisableOsdPlane() { return m_amlDRMUtils->DisableOsdPlane(); }
   bool aml_set_drmDevice_active(bool active) const
     { return m_amlDRMUtils->aml_set_drmDevice_active(
       m_amlDRMUtils->aml_get_drmDevice_mode(),

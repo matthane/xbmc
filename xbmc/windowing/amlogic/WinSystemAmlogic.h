@@ -19,6 +19,7 @@
 #include "utils/EGLUtils.h"
 
 #include <atomic>
+#include <chrono>
 #include <gbm.h>
 
 class IDispResource;
@@ -42,6 +43,25 @@ public:
   bool IsHDRDisplay() override;
   CHDRCapabilities GetDisplayHDRCapabilities() const override;
   float GetGuiSdrPeakLuminance() const override;
+  bool IsHdrSubtitlePlaneActive() const override;
+  bool EnsureHdrSubtitlePlane() override;
+
+  void EngageOSDBackend(bool engage, bool duringDv = false);
+  void SetOSDBackendDVEngagePending();
+  void TickOSDBackendPending();
+
+  // OSD2 subtitle plane, render thread only. GetOSD2BackBuffer returns
+  // the off-scanout buffer and its stable slot. PresentOSD2Frame stages
+  // that slot for the next GUI atomic; it does not report scanout completion.
+  bool ArmOSD2Plane();
+  bool GetOSD2BackBuffer(void** map,
+                         uint32_t* stride,
+                         uint32_t* width,
+                         uint32_t* height,
+                         uint32_t* bufferIndex);
+  bool PresentOSD2Frame();
+  void DisableOSD2();
+
   HDR_STATUS GetOSHDRStatus() override;
 
   virtual void Register(IDispResource *resource);
@@ -75,6 +95,12 @@ protected:
   bool m_hotplug_mode_switch{false};
   bool m_presentationReady{false};
   bool m_nativeGUI;
+  bool m_osdHdrSubtitleActive{false};
+  bool m_osd2Armed{false};
+  int m_osd2Front{-1}; // scanout buffer index, -1 = none shown
+  bool m_dvEngagePending{false};
+  bool m_osdHdrEngagedViaDv{false};
+  std::chrono::steady_clock::time_point m_dvPendingSince{};
   static std::unique_ptr<CAMLDisplay> m_amlDisplay;
   std::unique_ptr<CAMLGBMUtils> m_amlGBMUtils{nullptr};
   std::unique_ptr<KODI::UTILS::EGL::CEGLFence> m_eglFence{nullptr};

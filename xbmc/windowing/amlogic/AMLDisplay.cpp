@@ -7,6 +7,7 @@
 #include <drm_fourcc.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <amcodec/codec.h>
 
 #include "AMLDisplay.h"
@@ -24,6 +25,17 @@
 
 namespace
 {
+// OSD plane stacking. The vendor defaults are OSD1 (GUI primary) zpos 65
+// and OSD2 zpos 66, which would put the subtitles above the GUI. Subtitles
+// must sit above the video planes (default zpos 0) but below the GUI, so
+// the subtitle plane takes 65 and the GUI plane 66.
+constexpr unsigned int SUBTITLE_PLANE_ZPOS = 65;
+constexpr unsigned int GUI_PLANE_ZPOS = 66;
+
+// values of the standard "pixel blend type" and "alpha" plane properties
+constexpr unsigned int BLEND_PREMULTIPLIED = 1;
+constexpr unsigned int ALPHA_OPAQUE = 0xffff;
+
 constexpr float FractionalRate(float rate)
 {
   // Divide in double: in float the result lands one ULP low. Widened explicitly
@@ -54,6 +66,11 @@ CAMLGBMUtils::CAMLGBMUtils(int fd)
     CLog::Log(LOGERROR, "CAMLGBMUtils::{} - failed to create GBM device", __FUNCTION__);
     throw std::runtime_error("failed to create GBM device");
   }
+}
+
+CAMLGBMUtils::~CAMLGBMUtils()
+{
+  DestroyOsdBuffers();
 }
 
 bool CAMLGBMUtils::CreateSurface(int width, int height, uint32_t format)
@@ -167,6 +184,127 @@ bool CAMLGBMUtils::LockFrontBuffer(int fd)
   return m_drm_fb != nullptr;
 }
 
+bool CAMLGBMUtils::CreateOsdBuffers(int fd, int width, int height)
+{
+  DestroyOsdBuffers();
+  m_osdFd = fd;
+
+  for (int i = 0; i < 2; i++)
+  {
+    OsdBuffer& b = m_osd[i];
+
+    drm_mode_create_dumb create{};
+    create.width = width;
+    create.height = height;
+    create.bpp = 32;
+    // must stay 0: the vendor gem layer maps nonzero flags onto other
+    // heaps (scatter, non-contiguous, not scanout-capable)
+    create.flags = 0;
+    if (drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0)
+    {
+      CLog::LogF(LOGERROR, "failed to create osd dumb buffer {} ({} {})", i, strerror(errno),
+                 errno);
+      DestroyOsdBuffers();
+      return false;
+    }
+    b.handle = create.handle;
+    b.stride = create.pitch;
+    b.map_size = create.size;
+
+    drm_mode_map_dumb map{};
+    map.handle = b.handle;
+    if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0)
+    {
+      CLog::LogF(LOGERROR, "failed to map osd dumb buffer {} ({} {})", i, strerror(errno), errno);
+      DestroyOsdBuffers();
+      return false;
+    }
+    b.map = mmap(nullptr, b.map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
+    if (b.map == MAP_FAILED)
+    {
+      CLog::LogF(LOGERROR, "failed to mmap osd dumb buffer {} ({} {})", i, strerror(errno), errno);
+      b.map = nullptr;
+      DestroyOsdBuffers();
+      return false;
+    }
+
+    const uint32_t handles[4] = {b.handle, 0, 0, 0};
+    const uint32_t pitches[4] = {b.stride, 0, 0, 0};
+    const uint32_t offsets[4] = {0, 0, 0, 0};
+    if (drmModeAddFB2(fd, width, height, DRM_FORMAT_ARGB8888, handles, pitches, offsets, &b.fb_id,
+                      0) != 0)
+    {
+      CLog::LogF(LOGERROR, "failed to add fb for osd dumb buffer {} ({} {})", i, strerror(errno),
+                 errno);
+      DestroyOsdBuffers();
+      return false;
+    }
+  }
+
+  m_osdW = width;
+  m_osdH = height;
+  m_osdCreated = true;
+
+  ClearOsdBuffers();
+
+  CLog::LogF(LOGINFO,
+             "osd2 plane buffers created (dumb): {}x{} ARGB8888, stride {}, fb ids {}/{}", width,
+             height, m_osd[0].stride, m_osd[0].fb_id, m_osd[1].fb_id);
+  return true;
+}
+
+void CAMLGBMUtils::DestroyOsdBuffers()
+{
+  for (int i = 0; i < 2; i++)
+  {
+    OsdBuffer& b = m_osd[i];
+    if (b.map)
+      munmap(b.map, b.map_size);
+    if (b.fb_id && m_osdFd >= 0)
+      drmModeRmFB(m_osdFd, b.fb_id);
+    if (b.handle && m_osdFd >= 0)
+    {
+      drm_mode_destroy_dumb destroy{};
+      destroy.handle = b.handle;
+      drmIoctl(m_osdFd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+    }
+    b = {};
+  }
+  m_osdCreated = false;
+  m_osdFd = -1;
+  m_osdW = m_osdH = 0;
+}
+
+void CAMLGBMUtils::ClearOsdBuffers()
+{
+  if (!m_osdCreated)
+    return;
+  for (int i = 0; i < 2; i++)
+  {
+    if (m_osd[i].map)
+      memset(m_osd[i].map, 0, m_osd[i].map_size);
+  }
+}
+
+bool CAMLGBMUtils::GetOsdBuffer(int index, void** map, uint32_t* stride, uint32_t* width,
+                                uint32_t* height) const
+{
+  if (!m_osdCreated || index < 0 || index > 1)
+    return false;
+  *map = m_osd[index].map;
+  *stride = m_osd[index].stride;
+  *width = static_cast<uint32_t>(m_osdW);
+  *height = static_cast<uint32_t>(m_osdH);
+  return *map != nullptr;
+}
+
+uint32_t CAMLGBMUtils::GetOsdFbId(int index) const
+{
+  if (!m_osdCreated || index < 0 || index > 1)
+    return 0;
+  return m_osd[index].fb_id;
+}
+
 CAMLDRMUtils::CAMLDRMUtils()
 {
   // get drmDevice
@@ -252,6 +390,12 @@ void CAMLDRMUtils::CleanAndClose()
     m_plane = nullptr;
   }
 
+  if (m_osd_plane)
+  {
+    drmModeFreePlane(m_osd_plane);
+    m_osd_plane = nullptr;
+  }
+
   m_connection = DRM_MODE_DISCONNECTED;
 }
 
@@ -331,6 +475,93 @@ void CAMLDRMUtils::aml_init_drmDevice()
 
   if (aml_get_drmDevice_connected())
     aml_init_drmDevice_display();
+
+  // Claim the OSD2 overlay (the first non-primary OSD plane) for the subtitle
+  // backend - best-effort; absence only disables HDR subtitles.
+  aml_find_osd_overlay_plane();
+}
+
+bool CAMLDRMUtils::aml_find_osd_overlay_plane()
+{
+  if (m_osd_plane || m_crtcIdx < 0)
+    return m_osd_plane != nullptr;
+
+  drmModePlaneResPtr planeResources = drmModeGetPlaneResources(m_fd);
+  if (!planeResources)
+    return false;
+
+  drmModePlanePtr found = nullptr;
+  int bestZpos = -1;
+
+  for (uint32_t i = 0; i < planeResources->count_planes; i++)
+  {
+    drmModePlanePtr plane = drmModeGetPlane(m_fd, planeResources->planes[i]);
+    if (!plane)
+      continue;
+
+    bool keep = false;
+    if ((plane->possible_crtcs & (1 << m_crtcIdx)) &&
+        get_drmProp(plane->plane_id, "type", DRM_MODE_OBJECT_PLANE) == DRM_PLANE_TYPE_OVERLAY &&
+        SupportsFormat(plane, DRM_FORMAT_ARGB8888))
+    {
+      // OSD overlay planes carry zpos in [65,128] while video planes use
+      // [0,255] default 0; OSD1 is the primary already owned as m_plane,
+      // so the lowest-zpos OSD overlay is OSD2
+      const int zpos = get_drmProp(plane->plane_id, "zpos", DRM_MODE_OBJECT_PLANE);
+      if (zpos >= 65 && zpos <= 128 && (bestZpos < 0 || zpos < bestZpos))
+      {
+        if (found)
+          drmModeFreePlane(found);
+        found = plane;
+        bestZpos = zpos;
+        keep = true;
+      }
+    }
+    if (!keep)
+      drmModeFreePlane(plane);
+  }
+  drmModeFreePlaneResources(planeResources);
+
+  m_osd_plane = found;
+  if (m_osd_plane)
+    CLog::LogF(LOGINFO, "osd2 overlay plane claimed: id {} (default zpos {})",
+               m_osd_plane->plane_id, bestZpos);
+  else
+    CLog::LogF(LOGWARNING, "no OSD2 overlay plane found - HDR subtitles disabled");
+
+  return m_osd_plane != nullptr;
+}
+
+void CAMLDRMUtils::SetOsdPlaneActive(uint32_t fb_id, int src_w, int src_h)
+{
+  if (!m_osd_plane)
+    return;
+  m_osd_fb_id = fb_id;
+  m_osd_src_w = src_w;
+  m_osd_src_h = src_h;
+  m_osd_active = (fb_id != 0);
+}
+
+bool CAMLDRMUtils::DisableOsdPlane()
+{
+  m_osd_active = false;
+  m_osd_fb_id = 0;
+
+  if (!m_osd_plane || !m_crtc)
+    return false;
+
+  drmModeAtomicReqPtr req = drmModeAtomicAlloc();
+  if (!req)
+    return false;
+
+  set_drmProp(m_osd_plane->plane_id, "FB_ID", DRM_MODE_OBJECT_PLANE, 0, req);
+  set_drmProp(m_osd_plane->plane_id, "CRTC_ID", DRM_MODE_OBJECT_PLANE, 0, req);
+
+  const bool ok = drmModeAtomicCommit(m_fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL) == 0;
+  if (!ok)
+    CLog::LogF(LOGWARNING, "failed to disable osd2 plane");
+  drmModeAtomicFree(req);
+  return ok;
 }
 
 void CAMLDRMUtils::aml_init_drmDevice_display()
@@ -377,6 +608,7 @@ void CAMLDRMUtils::aml_init_drmDevice_display()
     if (m_encoder->possible_crtcs & (1 << i) && m_crtc->crtc_id == m_encoder->crtc_id)
     {
       CLog::Log(LOGDEBUG, "CAMLDRMUtils::{} - using crtc {}", __FUNCTION__, m_crtc->crtc_id);
+      m_crtcIdx = i;
       break;
     }
     else
@@ -984,6 +1216,25 @@ void CAMLDRMUtils::FlipPage(uint32_t fb_id)
   set_drmProp(m_plane->plane_id, "CRTC_Y", DRM_MODE_OBJECT_PLANE , 0, req);
   set_drmProp(m_plane->plane_id, "CRTC_W", DRM_MODE_OBJECT_PLANE , m_ScreenWidth, req);
   set_drmProp(m_plane->plane_id, "CRTC_H", DRM_MODE_OBJECT_PLANE , m_ScreenHeight, req);
+
+  // OSD2 must share the GUI atomic to avoid a second CRTC commit.
+  if (m_osd_plane && m_osd_active && m_osd_fb_id)
+  {
+    set_drmProp(m_osd_plane->plane_id, "FB_ID", DRM_MODE_OBJECT_PLANE, m_osd_fb_id, req);
+    set_drmProp(m_osd_plane->plane_id, "CRTC_ID", DRM_MODE_OBJECT_PLANE, m_crtc->crtc_id, req);
+    set_drmProp(m_osd_plane->plane_id, "SRC_X", DRM_MODE_OBJECT_PLANE, 0, req);
+    set_drmProp(m_osd_plane->plane_id, "SRC_Y", DRM_MODE_OBJECT_PLANE, 0, req);
+    set_drmProp(m_osd_plane->plane_id, "SRC_W", DRM_MODE_OBJECT_PLANE, m_osd_src_w << 16, req);
+    set_drmProp(m_osd_plane->plane_id, "SRC_H", DRM_MODE_OBJECT_PLANE, m_osd_src_h << 16, req);
+    set_drmProp(m_osd_plane->plane_id, "CRTC_X", DRM_MODE_OBJECT_PLANE, 0, req);
+    set_drmProp(m_osd_plane->plane_id, "CRTC_Y", DRM_MODE_OBJECT_PLANE, 0, req);
+    set_drmProp(m_osd_plane->plane_id, "CRTC_W", DRM_MODE_OBJECT_PLANE, m_ScreenWidth, req);
+    set_drmProp(m_osd_plane->plane_id, "CRTC_H", DRM_MODE_OBJECT_PLANE, m_ScreenHeight, req);
+    set_drmProp(m_osd_plane->plane_id, "zpos", DRM_MODE_OBJECT_PLANE, SUBTITLE_PLANE_ZPOS, req);
+    set_drmProp(m_osd_plane->plane_id, "pixel blend type", DRM_MODE_OBJECT_PLANE, BLEND_PREMULTIPLIED, req);
+    set_drmProp(m_osd_plane->plane_id, "alpha", DRM_MODE_OBJECT_PLANE, ALPHA_OPAQUE, req);
+    set_drmProp(m_plane->plane_id, "zpos", DRM_MODE_OBJECT_PLANE, GUI_PLANE_ZPOS, req);
+  }
 
   if (m_inFenceFd != -1)
   {

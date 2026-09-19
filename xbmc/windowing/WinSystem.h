@@ -280,6 +280,8 @@ public:
   // yields wrong transparency. When true, GUI draws select a compensated
   // alpha blend (see CGUIFontTTFGLES::FirstBegin).
   virtual bool IsHdrComposite() const { return false; }
+  virtual bool IsHdrSubtitlePlaneActive() const { return false; }
+  virtual bool EnsureHdrSubtitlePlane() { return false; }
 
   /*!
    * \brief Gets debug info from video renderer for use in "Debug Info OSD" (Alt + O)

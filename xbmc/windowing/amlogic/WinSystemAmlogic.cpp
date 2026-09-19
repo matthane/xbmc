@@ -13,6 +13,7 @@
 #include <exception>
 
 #include "ServiceBroker.h"
+#include "windowing/WinSystem.h"
 #include "cores/RetroPlayer/process/amlogic/RPProcessInfoAmlogic.h"
 #include "cores/RetroPlayer/rendering/VideoRenderers/RPRendererOpenGLES.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.h"
@@ -37,7 +38,9 @@
 
 #include "platform/linux/SysfsPath.h"
 
+#include <fcntl.h>
 #include <linux/fb.h>
+#include <sys/ioctl.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -82,6 +85,15 @@ CWinSystemAmlogic::~CWinSystemAmlogic()
 {
   MonitorStop();
 }
+
+namespace
+{
+// the subtitle canvas is the PGS domain: 1080p regardless of the display
+// mode (PGS is authored at 1080p even on UHD), the plane scales it via the
+// per-commit src/crtc rects
+constexpr int SUBTITLE_CANVAS_WIDTH = 1920;
+constexpr int SUBTITLE_CANVAS_HEIGHT = 1080;
+} // namespace
 
 void CWinSystemAmlogic::SettingOptionsComponentsFiller(const SettingConstPtr& setting,
                                                  std::vector<IntegerSettingOption>& list,
@@ -548,6 +560,245 @@ float CWinSystemAmlogic::GetGuiSdrPeakLuminance() const
   const int guiSdrPeak = settings->GetInt(CSettings::SETTING_VIDEOSCREEN_GUISDRPEAKLUMINANCE);
 
   return ((0.7f * guiSdrPeak + 30.0f) / 100.0f);
+}
+
+bool CWinSystemAmlogic::IsHdrSubtitlePlaneActive() const
+{
+  return m_osdHdrSubtitleActive && m_osd2Armed;
+}
+
+bool CWinSystemAmlogic::EnsureHdrSubtitlePlane()
+{
+  if (!m_osdHdrSubtitleActive)
+    return false;
+
+  if (ArmOSD2Plane())
+    return true;
+
+  EngageOSDBackend(false);
+  return false;
+}
+
+bool CWinSystemAmlogic::ArmOSD2Plane()
+{
+  // Allocate lazily after the playback mode switch settles.
+  if (m_osd2Armed)
+    return true;
+
+  auto* amlDisplay = GetAmlDisplay();
+  if (!amlDisplay || !amlDisplay->OsdOverlayPlaneValid())
+  {
+    CLog::LogF(LOGWARNING, "ArmOSD2Plane: no OSD2 overlay plane");
+    return false;
+  }
+
+  if (!m_amlGBMUtils ||
+      !m_amlGBMUtils->CreateOsdBuffers(amlDisplay->aml_get_Device_handle(), SUBTITLE_CANVAS_WIDTH,
+                                        SUBTITLE_CANVAS_HEIGHT))
+  {
+    CLog::LogF(LOGWARNING, "ArmOSD2Plane: buffer creation failed");
+    return false;
+  }
+
+  m_osd2Front = -1;
+  m_osd2Armed = true;
+  CLog::LogF(LOGINFO, "ArmOSD2Plane: OSD2 KMS plane armed (1080p canvas, plane scaling)");
+  return true;
+}
+
+bool CWinSystemAmlogic::GetOSD2BackBuffer(void** map,
+                                         uint32_t* stride,
+                                         uint32_t* width,
+                                         uint32_t* height,
+                                         uint32_t* bufferIndex)
+{
+  if (!m_osd2Armed || !m_amlGBMUtils)
+    return false;
+  const int back = (m_osd2Front < 0) ? 0 : 1 - m_osd2Front;
+  *bufferIndex = static_cast<uint32_t>(back);
+  return m_amlGBMUtils->GetOsdBuffer(back, map, stride, width, height);
+}
+
+bool CWinSystemAmlogic::PresentOSD2Frame()
+{
+  if (!m_osd2Armed || !m_amlGBMUtils)
+    return false;
+
+  const int back = (m_osd2Front < 0) ? 0 : 1 - m_osd2Front;
+  auto* amlDisplay = GetAmlDisplay();
+  if (!amlDisplay)
+    return false;
+
+  amlDisplay->SetOsdPlaneActive(m_amlGBMUtils->GetOsdFbId(back), SUBTITLE_CANVAS_WIDTH,
+                                SUBTITLE_CANVAS_HEIGHT);
+  m_osd2Front = back;
+  return true;
+}
+
+void CWinSystemAmlogic::DisableOSD2()
+{
+  if (!m_osd2Armed)
+    return;
+
+  auto* amlDisplay = GetAmlDisplay();
+  if (amlDisplay)
+    amlDisplay->DisableOsdPlane();
+
+  if (m_amlGBMUtils)
+    m_amlGBMUtils->ClearOsdBuffers();
+  m_osd2Front = -1;
+}
+
+void CWinSystemAmlogic::EngageOSDBackend(bool engage, bool duringDv)
+{
+  if (engage)
+  {
+    bool engaged = false;
+
+    bool viaDrm = false;
+    auto* amlDisplay = GetAmlDisplay();
+    if (amlDisplay && !duringDv)
+    {
+      amlDisplay->aml_set_drmProperty("meson.crtc.osd_hdr_bypass", DRM_MODE_OBJECT_CRTC, 1);
+      int val = amlDisplay->aml_get_drmProperty("meson.crtc.osd_hdr_bypass", DRM_MODE_OBJECT_CRTC);
+      viaDrm = engaged = (val == 1);
+    }
+
+    if (!engaged && duringDv)
+    {
+      // during DV the sysfs flag is the only engage: a plain variable flip
+      // applied by the kernel's own per-frame dispatch, while the DRM
+      // property write above is a synchronous atomic commit whose tail
+      // programs VPP registers mid-DV. CRTC state resets re-seed the DRM
+      // property from this flag, so nothing is lost by skipping it
+      CSysfsPath sysfsPath("/sys/module/aml_media/parameters/osd_hdr_bypass");
+      if (sysfsPath.Exists())
+      {
+        sysfsPath.Set(1);
+        engaged = sysfsPath.Get<int>().value_or(0) == 1;
+      }
+    }
+
+    if (engaged && duringDv)
+    {
+      // DV core2 must treat the blended graphics as PQ during IPT output.
+      CSysfsPath graphicFmt("/sys/class/amdolby_vision/graphic_fmt");
+      if (graphicFmt.Exists())
+        graphicFmt.Set(1);
+
+      // graphics-priority mode: the DV lib maps the graphics layer
+      // luminance high only under G_PRIORITY, under auto video priority it
+      // maps graphics low and the subtitles render dark during playback
+      CSysfsPath forcePriority("/sys/class/amdolby_vision/force_priority");
+      if (forcePriority.Exists())
+        forcePriority.Set(1);
+    }
+
+    if (engaged)
+    {
+      m_osdHdrSubtitleActive = true;
+      m_osdHdrEngagedViaDv = duringDv;
+      m_dvEngagePending = false;
+      CLog::LogF(LOGINFO, "OSD PQ backend engaged ({} path{})",
+                 duringDv ? "dv-sysfs" : (viaDrm ? "drm" : "sysfs"),
+                 duringDv ? ", graphic_fmt=HDR10, g_priority" : "");
+    }
+    else
+    {
+      m_dvEngagePending = false;
+      CLog::LogF(LOGWARNING, "failed to engage OSD PQ backend (duringDv={})", duringDv);
+    }
+  }
+  else
+  {
+    if (!m_osdHdrSubtitleActive)
+    {
+      m_dvEngagePending = false;
+      return;
+    }
+
+    if (m_osdHdrEngagedViaDv)
+    {
+      // DV-safe disengage ordering: stop feeding PQ pixels first (one
+      // NONBLOCK plane disable - no synchronous VPP-programming commit),
+      // then clear the flags the kernel dispatch consumes.
+      DisableOSD2();
+
+      CSysfsPath sysfsPath("/sys/module/aml_media/parameters/osd_hdr_bypass");
+      if (sysfsPath.Exists())
+        sysfsPath.Set(0);
+
+      CSysfsPath("/sys/class/drm/card0/vpu/debug", "ow 0");
+
+      CSysfsPath graphicFmt("/sys/class/amdolby_vision/graphic_fmt");
+      if (graphicFmt.Exists())
+        graphicFmt.Set(2);
+
+      CSysfsPath forcePriority("/sys/class/amdolby_vision/force_priority");
+      if (forcePriority.Exists())
+        forcePriority.Set(0);
+    }
+    else
+    {
+      auto* amlDisplay = GetAmlDisplay();
+      if (amlDisplay)
+        amlDisplay->aml_set_drmProperty("meson.crtc.osd_hdr_bypass", DRM_MODE_OBJECT_CRTC, 0);
+
+      CSysfsPath sysfsPath("/sys/module/aml_media/parameters/osd_hdr_bypass");
+      if (sysfsPath.Exists())
+        sysfsPath.Set(0);
+
+      CSysfsPath("/sys/class/drm/card0/vpu/debug", "ow 0");
+
+      DisableOSD2();
+    }
+    m_osdHdrSubtitleActive = false;
+    m_osdHdrEngagedViaDv = false;
+    m_dvEngagePending = false;
+    CLog::LogF(LOGINFO, "OSD PQ backend disengaged");
+  }
+}
+
+void CWinSystemAmlogic::SetOSDBackendDVEngagePending()
+{
+  m_dvEngagePending = true;
+  m_dvPendingSince = std::chrono::steady_clock::now();
+  CLog::LogF(LOGINFO, "OSD PQ backend: DV playback - engage deferred until the DV engine settles");
+}
+
+void CWinSystemAmlogic::TickOSDBackendPending()
+{
+  if (!m_dvEngagePending)
+    return;
+
+  const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - m_dvPendingSince).count();
+
+  bool settled = false;
+  // the dv_video_on/dv_status DRM properties do not exist on this SoC;
+  // the sysfs node reads 1 exactly while the DV engine processes video,
+  // 0 in the collapsed and teardown states (same read pattern as
+  // aml_support_dolby_vision())
+  CSysfsPath dvVideoOn("/sys/class/amdolby_vision/dv_video_on");
+  if (dvVideoOn.Exists())
+    settled = dvVideoOn.Get<int>().value_or(0) == 1;
+
+  // warm-up like the display mode switch's amdv_wait_delay head start
+  constexpr auto kWarmupMs = 2000;
+  constexpr auto kTimeoutMs = 10000;
+
+  if (settled && elapsedMs >= kWarmupMs)
+  {
+    CLog::LogF(LOGINFO, "OSD PQ backend: DV settled after {}ms - engaging", elapsedMs);
+    EngageOSDBackend(true, /*duringDv=*/true);
+  }
+  else if (elapsedMs >= kTimeoutMs)
+  {
+    CLog::LogF(LOGWARNING,
+               "OSD PQ backend: DV settle timeout after {}ms (settled={}) - giving up, stock DV behavior",
+               elapsedMs, settled);
+    m_dvEngagePending = false;
+  }
 }
 
 HDR_STATUS CWinSystemAmlogic::GetOSHDRStatus()
