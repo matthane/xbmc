@@ -4394,6 +4394,13 @@ bool CVideoPlayer::OpenStream(CCurrentStream& current, int64_t demuxerId, int iS
         hint.colorSpace = m_CurrentVideo.hint.colorSpace;
         hint.colorPrimaries = m_CurrentVideo.hint.colorPrimaries;
         hint.colorTransferCharacteristic = m_CurrentVideo.hint.colorTransferCharacteristic;
+        // PGS on Dolby Vision Profile 5 remuxes carries no transfer tag:
+        // derive PQ from the video's HDR class so the palette routes to
+        // the HDR path. An explicit tag always wins.
+        if (m_CurrentVideo.hint.hdrType != StreamHdrType::HDR_TYPE_NONE &&
+            (hint.colorTransferCharacteristic == AVCOL_TRC_UNSPECIFIED ||
+             hint.colorTransferCharacteristic == AVCOL_TRC_RESERVED0))
+          hint.colorTransferCharacteristic = AVCOL_TRC_SMPTE2084;
       }
       res = OpenSubtitleStream(hint);
       break;
