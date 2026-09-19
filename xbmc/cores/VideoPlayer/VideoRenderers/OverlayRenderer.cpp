@@ -9,6 +9,8 @@
 
 #include "OverlayRenderer.h"
 
+#include "OverlayRendererDRM.h"
+
 #include "OverlayRendererUtil.h"
 #include "ServiceBroker.h"
 #include "application/ApplicationComponents.h"
@@ -88,6 +90,8 @@ void CRenderer::UnInit()
   }
 
   Flush();
+
+  SubtitleCanvasReset();
 }
 
 void CRenderer::Flush()
@@ -99,6 +103,8 @@ void CRenderer::Flush()
 
   ReleaseCache();
   Reset();
+
+  SubtitlePlaneFlush();
 }
 
 void CRenderer::Reset()
@@ -153,6 +159,8 @@ void CRenderer::Render(int idx, float depth)
   // during HDR composite the m_isHDROverlay overlays render via
   // RenderHDROverlays instead
   const bool hdrComposite = CServiceBroker::GetWinSystem()->IsHdrComposite();
+  const bool subtitlePlaneActive =
+      CServiceBroker::GetWinSystem()->IsHdrSubtitlePlaneActive();
 
   std::vector<SElement>& list = m_buffers[idx];
   for(std::vector<SElement>::iterator it = list.begin(); it != list.end(); ++it)
@@ -161,11 +169,12 @@ void CRenderer::Render(int idx, float depth)
     {
       std::shared_ptr<COverlay> o = Convert(*it);
 
-      if (o && !(hdrComposite && o->m_isHDROverlay))
+      if (o && !((hdrComposite || subtitlePlaneActive) && o->m_isHDROverlay))
         Render(o.get());
     }
   }
 
+  SubtitlePlaneFramePresent();
   ReleaseUnused();
 }
 
@@ -173,7 +182,10 @@ void CRenderer::Render(int idx, float depth)
 // FBO's sRGB->HDR conversion
 void CRenderer::RenderHDROverlays(int idx)
 {
-  if (!CServiceBroker::GetWinSystem()->IsHdrComposite())
+  const bool hdrComposite = CServiceBroker::GetWinSystem()->IsHdrComposite();
+  const bool subtitlePlaneActive =
+      CServiceBroker::GetWinSystem()->IsHdrSubtitlePlaneActive();
+  if (!hdrComposite && !subtitlePlaneActive)
     return;
 
   std::unique_lock lock(m_section);
@@ -190,6 +202,7 @@ void CRenderer::RenderHDROverlays(int idx)
     }
   }
 
+  SubtitlePlaneFramePresent();
   ReleaseUnused();
 }
 
@@ -458,6 +471,7 @@ void CRenderer::PrepareOverlays(int idx)
 
   bool doMarkDirty = false;
   bool hasImageSpu = false;
+  bool hasHdrImageOverlay = false;
   for (auto& e : m_buffers[idx])
   {
     // Clear last frame's cached output; libass may have invalidated the
@@ -478,6 +492,9 @@ void CRenderer::PrepareOverlays(int idx)
     if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) || o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     {
       hasImageSpu = true;
+      if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) &&
+          static_cast<CDVDOverlayImage&>(o).m_isHDROverlay)
+        hasHdrImageOverlay = true;
       if (o.m_textureid == 0)
         doMarkDirty = true;
       continue;
@@ -617,6 +634,11 @@ void CRenderer::PrepareOverlays(int idx)
     doMarkDirty = true;
   m_prevHadImageSpu = hasImageSpu;
 
+  if (hasHdrImageOverlay)
+    CServiceBroker::GetWinSystem()->EnsureHdrSubtitlePlane();
+
+  SubtitlePlaneFrameBegin(hasHdrImageOverlay);
+
   if (doMarkDirty)
     MarkDirty();
 }
@@ -676,7 +698,23 @@ std::shared_ptr<COverlay> CRenderer::Convert(SElement& e)
     std::map<unsigned int, std::shared_ptr<COverlay>>::iterator it =
         m_textureCache.find(o.m_textureid);
     if (it != m_textureCache.end())
-      r = it->second;
+    {
+      if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE))
+      {
+        auto& imgOverlay = static_cast<CDVDOverlayImage&>(o);
+        const bool useDrm = CServiceBroker::GetWinSystem()->IsHdrSubtitlePlaneActive() &&
+                            imgOverlay.m_isHDROverlay;
+        const bool cachedDrm = dynamic_cast<COverlayDRM*>(it->second.get()) != nullptr;
+        if (useDrm == cachedDrm)
+          r = it->second;
+        else
+          m_textureCache.erase(it);
+      }
+      else
+      {
+        r = it->second;
+      }
+    }
   }
 
   if (r)
@@ -685,7 +723,13 @@ std::shared_ptr<COverlay> CRenderer::Convert(SElement& e)
   }
 
   if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE))
-    r = COverlay::Create(static_cast<CDVDOverlayImage&>(o), m_rs);
+  {
+    auto& imgOverlay = static_cast<CDVDOverlayImage&>(o);
+    if (CServiceBroker::GetWinSystem()->IsHdrSubtitlePlaneActive() && imgOverlay.m_isHDROverlay)
+      r = std::make_shared<COverlayDRM>(imgOverlay, m_rs);
+    else
+      r = COverlay::Create(imgOverlay, m_rs);
+  }
   else if (o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
     r = COverlay::Create(static_cast<CDVDOverlaySpu&>(o));
 

@@ -290,7 +290,8 @@ bool ShouldConvertPQPaletteToSRGB(bool isHDROverlay)
   // composite, or a GUI layer that is output as an HDR signal.
   const CWinSystemBase* winSystem = CServiceBroker::GetWinSystem();
   const bool destinationIsPQ =
-      winSystem->IsHdrComposite() || winSystem->GetEotf() != KODI::UTILS::Eotf::TRADITIONAL_SDR;
+      winSystem->IsHdrComposite() || winSystem->GetEotf() != KODI::UTILS::Eotf::TRADITIONAL_SDR ||
+      winSystem->IsHdrSubtitlePlaneActive();
   return !destinationIsPQ;
 }
 

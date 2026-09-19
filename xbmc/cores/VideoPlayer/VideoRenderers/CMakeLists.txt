@@ -50,4 +50,10 @@ if(TARGET ${APP_NAME_LC}::OpenGLES AND ("android" IN_LIST CORE_PLATFORM_NAME_LC 
                       OverlayRendererGLES.cpp)
 endif()
 
+if(TARGET ${APP_NAME_LC}::AML)
+  list(APPEND SOURCES OverlayRendererDRM.cpp
+                      SubtitleComposition.cpp)
+  list(APPEND HEADERS SubtitleComposition.h)
+endif()
+
 core_add_library(videorenderers)

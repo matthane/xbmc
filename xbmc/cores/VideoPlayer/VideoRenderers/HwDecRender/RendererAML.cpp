@@ -35,6 +35,8 @@ CRendererAML::~CRendererAML()
 {
   Reset();
   CServiceBroker::GetWinSystem()->GetGfxContext().SetTransferPQ(false);
+  static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
+      ->EngageOSDBackend(false);
 }
 
 CBaseRenderer* CRendererAML::Create(CVideoBuffer *buffer)
@@ -78,6 +80,17 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
     user_dv_disable ? "disabled" : "enabled", dv_is_used ? "enabled" : "disabled", hdr_is_used ? "used" : "not used");
 
   CServiceBroker::GetWinSystem()->GetGfxContext().SetTransferPQ(dv_is_used | hdr_is_used);
+
+  auto* winSystem = static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem());
+  if (dv_is_used)
+  {
+    // during DV output the engage must wait for the DV engine to settle,
+    // then engage sysfs-only with graphic_fmt=HDR10 so the DV core maps
+    // the PQ subtitle plane correctly
+    winSystem->SetOSDBackendDVEngagePending();
+  }
+  else
+    winSystem->EngageOSDBackend(hdr_is_used);
 
   m_bConfigured = true;
 
@@ -178,6 +191,10 @@ bool CRendererAML::Flush(bool saveBuffers)
 
 void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
 {
+  // deferred DV engage
+  static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
+      ->TickOSDBackendPending();
+
   ManageRenderArea();
 
   CAMLVideoBuffer *amli = dynamic_cast<CAMLVideoBuffer *>(m_buffers[index].videoBuffer);
