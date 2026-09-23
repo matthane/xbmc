@@ -94,6 +94,8 @@ bool CWinSystemAmlogicGLESContext::InitWindowSystem()
 
 bool CWinSystemAmlogicGLESContext::DestroyWindowSystem()
 {
+  ResetHdrGuiSession();
+
   if (IsPresentationReady())
   {
     SetPresentationReady(false);
@@ -367,6 +369,132 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
   }
 
   return m_guiCompositing;
+}
+
+bool CWinSystemAmlogicGLESContext::SetDvGraphicFormat(unsigned int format)
+{
+  CSysfsPath graphicFormat{"/sys/class/amdolby_vision/graphic_fmt"};
+  if (!graphicFormat.Exists())
+    return false;
+
+  try
+  {
+    graphicFormat.Set(format);
+    return true;
+  }
+  catch (const std::exception& e)
+  {
+    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to set DV graphic format: {}",
+              e.what());
+    return false;
+  }
+}
+
+bool CWinSystemAmlogicGLESContext::SetDvGraphicsPriority(unsigned int priority)
+{
+  CSysfsPath forcePriority{"/sys/class/amdolby_vision/force_priority"};
+  if (!forcePriority.Exists())
+    return false;
+
+  try
+  {
+    forcePriority.Set(priority);
+    return true;
+  }
+  catch (const std::exception& e)
+  {
+    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to set DV graphics priority: {}",
+              e.what());
+    return false;
+  }
+}
+
+bool CWinSystemAmlogicGLESContext::SetDvGraphicsState(bool enabled)
+{
+  if (!enabled)
+  {
+    const bool formatRestored = SetDvGraphicFormat(2 /* FORMAT_SDR */);
+    const bool priorityRestored = SetDvGraphicsPriority(0 /* automatic */);
+    return formatRestored && priorityRestored;
+  }
+
+  if (!SetDvGraphicFormat(1 /* FORMAT_HDR10 */))
+    return false;
+
+  if (SetDvGraphicsPriority(1 /* G_PRIORITY */))
+    return true;
+
+  // do not leave a partially enabled DV graphics declaration behind
+  SetDvGraphicFormat(2 /* FORMAT_SDR */);
+  SetDvGraphicsPriority(0 /* automatic */);
+  return false;
+}
+
+uint64_t CWinSystemAmlogicGLESContext::ConfigureHdrGuiSession(uint64_t owner,
+                                                              int colorTransfer,
+                                                              bool dvGraphics)
+{
+  std::lock_guard lock(m_hdrGuiMutex);
+
+  if (owner == 0 || owner != m_hdrGuiOwner)
+  {
+    owner = ++m_hdrGuiNextOwner;
+    if (owner == 0)
+      owner = ++m_hdrGuiNextOwner;
+  }
+
+  // the FBO composite performs the GUI transfer; the direct late PGS pass
+  // must therefore use the texture shader without its SDR-peak multiplier
+  GetGfxContext().SetTransferPQ(false);
+
+  if (!SetGuiCompositing(colorTransfer))
+  {
+    if (m_hdrGuiDvGraphics)
+      SetDvGraphicsState(false);
+    m_hdrGuiOwner = 0;
+    m_hdrGuiDvGraphics = false;
+    return 0;
+  }
+
+  if (dvGraphics != m_hdrGuiDvGraphics)
+  {
+    if (!SetDvGraphicsState(dvGraphics))
+    {
+      SetGuiCompositing(0);
+      if (m_hdrGuiDvGraphics)
+        SetDvGraphicsState(false);
+      m_hdrGuiOwner = 0;
+      m_hdrGuiDvGraphics = false;
+      return 0;
+    }
+  }
+
+  m_hdrGuiOwner = owner;
+  m_hdrGuiDvGraphics = dvGraphics;
+  return owner;
+}
+
+void CWinSystemAmlogicGLESContext::ReleaseHdrGuiSession(uint64_t owner)
+{
+  std::lock_guard lock(m_hdrGuiMutex);
+  if (owner == 0 || owner != m_hdrGuiOwner)
+    return;
+
+  SetGuiCompositing(0);
+  if (m_hdrGuiDvGraphics)
+    SetDvGraphicsState(false);
+  m_hdrGuiOwner = 0;
+  m_hdrGuiDvGraphics = false;
+}
+
+void CWinSystemAmlogicGLESContext::ResetHdrGuiSession()
+{
+  std::lock_guard lock(m_hdrGuiMutex);
+  SetGuiCompositing(0);
+  if (m_hdrGuiDvGraphics)
+    SetDvGraphicsState(false);
+  m_hdrGuiOwner = 0;
+  m_hdrGuiDvGraphics = false;
 }
 
 bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
