@@ -544,9 +544,9 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
     m_guiFbo.EndRender();
 }
 
-void CWinSystemAmlogicGLESContext::ClearBackBuffer()
+void CWinSystemAmlogicGLESContext::ClearBackBuffer(bool guiWillRender)
 {
-  if (!m_guiWillRender)
+  if (!guiWillRender)
     return;
 
   // Clear the backbuffer before video renders. In the FBO compositing path,

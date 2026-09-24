@@ -908,13 +908,13 @@ void CApplication::Render()
   if (!CServiceBroker::GetRenderSystem()->BeginRender())
     return;
 
-  CServiceBroker::GetWinSystem()->ClearBackBuffer();
+  const bool guiWillRender = appPower->GetRenderGUI() && !m_skipGuiRender;
+  CServiceBroker::GetWinSystem()->ClearBackBuffer(guiWillRender);
 
   // render video layer
   CServiceBroker::GetGUI()->GetWindowManager().RenderEx();
 
   // render gui layer
-  const bool guiWillRender = appPower->GetRenderGUI() && !m_skipGuiRender;
   bool compositing = CServiceBroker::GetWinSystem()->BeginGuiComposite(guiWillRender);
   if (guiWillRender)
   {
