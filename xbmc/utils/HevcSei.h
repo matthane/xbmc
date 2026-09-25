@@ -59,6 +59,13 @@ public:
   static std::vector<uint8_t> RemoveHdr10PlusFromSeiNalu(
       const uint8_t* inData, const size_t inDataLen);
 
+  // Returns the alternative transfer characteristics SEI value of a length prefixed access unit.
+  // The walk stops at the first slice and sets irap when that slice is an IRAP picture.
+  static std::optional<uint8_t> FindAlternativeTransfer(const uint8_t* data,
+                                                        const size_t size,
+                                                        const int nalLengthSize,
+                                                        bool& irap);
+
 private:
   // Parses single SEI message from the reader and pushes it to the list
   static int ParseSeiMessage(CBitstreamReader& br, std::vector<CHevcSei>& messages);

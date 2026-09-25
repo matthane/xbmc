@@ -8,6 +8,22 @@
 
 #include "HevcSei.h"
 
+namespace
+{
+enum
+{
+  HEVC_NAL_BLA_W_LP = 16,
+  HEVC_NAL_RSV_IRAP_VCL23 = 23,
+  HEVC_NAL_RSV_VCL31 = 31,
+  HEVC_NAL_SEI_PREFIX = 39
+};
+
+enum
+{
+  SEI_TYPE_ALTERNATIVE_TRANSFER_CHARACTERISTICS = 147
+};
+} // namespace
+
 void HevcAddStartCodeEmulationPrevention3Byte(std::vector<uint8_t>& buf)
 {
   size_t i = 0;
@@ -192,4 +208,47 @@ std::vector<uint8_t> CHevcSei::RemoveHdr10PlusFromSeiNalu(
   }
 
   return std::move(buf);
+}
+
+std::optional<uint8_t> CHevcSei::FindAlternativeTransfer(const uint8_t* data,
+                                                         const size_t size,
+                                                         const int nalLengthSize,
+                                                         bool& irap)
+{
+  size_t pos = 0;
+
+  while (size - pos > static_cast<size_t>(nalLengthSize))
+  {
+    size_t nalSize = 0;
+    for (int i = 0; i < nalLengthSize; i++)
+      nalSize = (nalSize << 8) | data[pos++];
+
+    if (nalSize == 0 || nalSize > size - pos)
+      break;
+
+    const uint8_t* nal = data + pos;
+    const int nalType = (nal[0] >> 1) & 0x3f;
+    pos += nalSize;
+
+    if (nalType <= HEVC_NAL_RSV_VCL31)
+    {
+      irap = nalType >= HEVC_NAL_BLA_W_LP && nalType <= HEVC_NAL_RSV_IRAP_VCL23;
+      break;
+    }
+
+    if (nalType != HEVC_NAL_SEI_PREFIX)
+      continue;
+
+    std::vector<uint8_t> buf;
+    for (const CHevcSei& sei : ParseSeiRbspUnclearedEmulation(nal, nalSize, buf))
+    {
+      // m_payloadType wraps for types above 255, so also check the unextended type byte
+      if (sei.m_payloadType == SEI_TYPE_ALTERNATIVE_TRANSFER_CHARACTERISTICS &&
+          buf[sei.m_msgOffset] == SEI_TYPE_ALTERNATIVE_TRANSFER_CHARACTERISTICS &&
+          sei.m_payloadSize > 0)
+        return buf[sei.m_payloadOffset];
+    }
+  }
+
+  return {};
 }
