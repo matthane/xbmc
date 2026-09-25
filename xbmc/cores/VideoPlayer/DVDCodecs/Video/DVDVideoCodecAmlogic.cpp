@@ -473,8 +473,9 @@ void CDVDVideoCodecAmlogic::Close(void)
 
   m_videoBufferPool = nullptr;
 
-  if (m_Codec)
-    m_Codec->CloseDecoder(), m_Codec = nullptr;
+  if (m_Codec && m_opened)
+    m_Codec->CloseDecoder();
+  m_Codec = nullptr;
 
   m_videobuffer.iFlags = 0;
 

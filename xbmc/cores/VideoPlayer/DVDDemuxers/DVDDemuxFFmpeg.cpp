@@ -33,6 +33,7 @@
 #include "threads/SystemClock.h"
 #include "utils/AMLUtils.h"
 #include "utils/FontUtils.h"
+#include "utils/HevcSei.h"
 #include "utils/LanguageTag.h"
 #include "utils/StreamUtils.h"
 #include "utils/StringUtils.h"
@@ -45,6 +46,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -107,6 +109,37 @@ bool AttachmentIsFont(const AVDictionaryEntry* dict)
            font_mimetypes.end();
   }
   return false;
+}
+
+// a stream cut mid-GOP may open with non-IRAP packets
+constexpr int MAX_TRANSFER_SCAN_PACKETS = 8;
+
+// hvcC: 23 byte header, lengthSizeMinusOne in the low bits of byte 21
+constexpr int HVCC_HEADER_SIZE = 23;
+constexpr int HVCC_LENGTH_SIZE_BYTE = 21;
+
+// FFmpeg applies an alternative transfer characteristics SEI only while decoding, and its
+// probe does not decode HEVC with hvcC extradata
+std::optional<uint8_t> GetPreferredTransfer(const AVCodecParameters* codecpar,
+                                            const uint8_t* data,
+                                            int size,
+                                            bool& irap)
+{
+  if (codecpar->color_primaries != AVCOL_PRI_BT2020)
+    return {};
+
+  switch (codecpar->codec_id)
+  {
+    case AV_CODEC_ID_HEVC:
+      // Annex B extradata starts with a start code, hvcC with version 1
+      if (codecpar->extradata_size < HVCC_HEADER_SIZE ||
+          !(codecpar->extradata[0] || codecpar->extradata[1] || codecpar->extradata[2] > 1))
+        return {};
+      return CHevcSei::FindAlternativeTransfer(
+          data, size, (codecpar->extradata[HVCC_LENGTH_SIZE_BYTE] & 3) + 1, irap);
+    default:
+      return {};
+  }
 }
 } // namespace
 
@@ -1302,6 +1335,25 @@ DemuxPacket* CDVDDemuxFFmpeg::ReadInternal(bool keep)
         // content has changed
         stream = AddStream(pPacket->iStreamId);
       }
+      else if (static_cast<CDemuxStreamVideo*>(stream)->hdr_type == StreamHdrType::HDR_TYPE_NONE &&
+               m_transferScanPackets[pPacket->iStreamId] < MAX_TRANSFER_SCAN_PACKETS)
+      {
+        AVCodecParameters* codecpar = m_pFormatContext->streams[pPacket->iStreamId]->codecpar;
+        bool irap = false;
+        const std::optional<uint8_t> transfer =
+            GetPreferredTransfer(codecpar, pPacket->pData, pPacket->iSize, irap);
+        if (transfer == AVCOL_TRC_ARIB_STD_B67)
+        {
+          CLog::Log(LOGINFO, "CDVDDemuxFFmpeg::{} - stream {}: SEI signals HLG over VUI transfer {}",
+                    __FUNCTION__, pPacket->iStreamId, av_color_transfer_name(codecpar->color_trc));
+          codecpar->color_trc = AVCOL_TRC_ARIB_STD_B67;
+          stream = AddStream(pPacket->iStreamId);
+        }
+        if (transfer || irap)
+          m_transferScanPackets[pPacket->iStreamId] = MAX_TRANSFER_SCAN_PACKETS;
+        else
+          m_transferScanPackets[pPacket->iStreamId]++;
+      }
       if (stream && stream->codec == AV_CODEC_ID_H264)
         pPacket->recoveryPoint = m_seekToKeyFrame;
       m_seekToKeyFrame = false;
@@ -1855,6 +1907,7 @@ void CDVDDemuxFFmpeg::DisposeStreams()
     delete it->second;
   m_streams.clear();
   m_parsers.clear();
+  m_transferScanPackets.clear();
 }
 
 void CDVDDemuxFFmpeg::RemoveStream(CDemuxStream *stream)

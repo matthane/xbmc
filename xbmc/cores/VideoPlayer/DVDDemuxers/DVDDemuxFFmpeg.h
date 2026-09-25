@@ -152,6 +152,7 @@ protected:
   CCriticalSection m_critSection;
   std::map<int, CDemuxStream*> m_streams;
   std::map<int, std::unique_ptr<CDemuxParserFFmpeg>> m_parsers;
+  std::map<int, int> m_transferScanPackets;
 
   AVIOContext* m_ioContext;
 
