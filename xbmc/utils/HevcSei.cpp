@@ -49,6 +49,7 @@ void HevcClearStartCodeEmulationPrevention3Byte(const uint8_t* buf,
 int CHevcSei::ParseSeiMessage(CBitstreamReader& br, std::vector<CHevcSei>& messages)
 {
   CHevcSei sei;
+  const unsigned int availableBits{br.AvailableBits()};
   uint8_t lastPayloadTypeByte{0};
   uint8_t lastPayloadSizeByte{0};
 
@@ -74,7 +75,7 @@ int CHevcSei::ParseSeiMessage(CBitstreamReader& br, std::vector<CHevcSei>& messa
   sei.m_payloadOffset = br.Position() / 8;
 
   // Invalid size
-  if (sei.m_payloadSize > br.AvailableBits())
+  if ((sei.m_payloadOffset - sei.m_msgOffset + sei.m_payloadSize) * 8 > availableBits)
     return 1;
 
   br.SkipBits(sei.m_payloadSize * 8);
