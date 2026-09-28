@@ -559,6 +559,7 @@ void CWinSystemAmlogic::SetHdrToSdrMode(int hdr2sdr)
   if (hdr2sdr)
     CSysfsPath("/sys/module/aml_media/parameters/hdr_policy", 1);
   CSysfsPath("/sys/module/aml_media/parameters/hdr_mode", hdr2sdr);
+  m_hdrToSdr = hdr2sdr != 0;
 }
 
 bool CWinSystemAmlogic::IsHDRDisplay()

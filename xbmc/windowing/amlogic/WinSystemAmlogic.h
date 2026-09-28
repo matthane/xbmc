@@ -49,6 +49,8 @@ public:
   void OnSettingChanged(const std::shared_ptr<const CSetting>& setting) override;
   void OnSettingsLoaded() override;
 
+  bool IsHdrToSdr() const { return m_hdrToSdr.load(); }
+
   // prevent a stale renderer from restoring HDR GUI state owned by a newer session
   virtual uint64_t ConfigureHdrGuiSession(uint64_t owner, int colorTransfer, bool dvGraphics) = 0;
   virtual void ReleaseHdrGuiSession(uint64_t owner) = 0;
@@ -105,4 +107,5 @@ private:
   struct udev *m_udev;
   struct callback_data m_callback_data;
   std::atomic<bool> m_hotplugPending{false};
+  std::atomic<bool> m_hdrToSdr{false};
 };
