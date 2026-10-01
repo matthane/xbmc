@@ -67,6 +67,7 @@
 #include "windows/GUIWindowStartup.h"
 #include "windows/GUIWindowSystemInfo.h"
 
+#include <cmath>
 #include <mutex>
 
 // Dialog includes
@@ -189,6 +190,20 @@ bool PreValidateMessage(CGUIMessage& message, CGUIWindow& window)
     }
   }
   return true;
+}
+
+// edge of the blocks a tile-based GPU renders a damaged surface in: damage that ends inside
+// a block still costs the whole block, and the Mali G52 clears the rest of the block
+constexpr float TILE_SIZE = 32.0f;
+
+CRect SnapToTiles(const CRect& rect, float width, float height)
+{
+  // blocks count from the top-left corner of the surface as it is scanned out
+  CRect snapped(std::floor(rect.x1 / TILE_SIZE) * TILE_SIZE,
+                std::floor(rect.y1 / TILE_SIZE) * TILE_SIZE,
+                std::ceil(rect.x2 / TILE_SIZE) * TILE_SIZE,
+                std::ceil(rect.y2 / TILE_SIZE) * TILE_SIZE);
+  return snapped.Intersect(CRect(0, 0, width, height));
 }
 } // namespace
 
@@ -1478,6 +1493,10 @@ bool CGUIWindowManager::Render()
   }
   else
   {
+    const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+    for (auto& region : dirtyRegions)
+      region = CDirtyRegion(SnapToTiles(region, context.GetWidth(), context.GetHeight()));
+
     for (const auto& i : dirtyRegions)
     {
       if (i.IsEmpty())
