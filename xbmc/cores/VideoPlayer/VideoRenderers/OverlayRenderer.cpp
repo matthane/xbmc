@@ -118,6 +118,21 @@ void OVERLAY::MarkDirty()
   CServiceBroker::GetGUI()->GetWindowManager().MarkRegionDirty();
 }
 
+void OVERLAY::MarkDirty(const CRect& rect)
+{
+  CServiceBroker::GetGUI()->GetWindowManager().MarkRegionDirty(rect);
+}
+
+namespace
+{
+// placement only, for the bounds of an overlay that is not converted yet
+class COverlayPlacement : public COverlay
+{
+public:
+  void Render(SRenderState& state) override {}
+};
+} // namespace
+
 unsigned int CRenderer::m_textureid = 1;
 
 CRenderer::CRenderer()
@@ -167,6 +182,7 @@ void CRenderer::Flush()
 
   ReleaseCache();
   Reset();
+  m_flushed = true;
 }
 
 void CRenderer::Reset()
@@ -557,6 +573,7 @@ void CRenderer::PrepareOverlays(int idx)
 
   bool doMarkDirty = false;
   bool hasImageSpu = false;
+  CRect bounds;
   for (auto& e : m_buffers[idx])
   {
     // Clear last frame's cached output; libass may have invalidated the
@@ -579,6 +596,7 @@ void CRenderer::PrepareOverlays(int idx)
       hasImageSpu = true;
       if (o.m_textureid == 0)
         doMarkDirty = true;
+      bounds.Union(GetBounds(e));
       continue;
     }
 
@@ -707,6 +725,7 @@ void CRenderer::PrepareOverlays(int idx)
       ovAss.m_pendingChange = currentChange;
       doMarkDirty = true;
     }
+    bounds.Union(GetBounds(e));
   }
 
   // PGS/DVB/SPU disappearance: arrival is caught by m_textureid==0 in
@@ -716,8 +735,68 @@ void CRenderer::PrepareOverlays(int idx)
     doMarkDirty = true;
   m_prevHadImageSpu = hasImageSpu;
 
-  if (doMarkDirty)
-    MarkDirty();
+  if (doMarkDirty || m_flushed || bounds != m_lastBounds)
+  {
+    CRect dirty = m_lastBounds;
+    dirty.Union(bounds);
+    if (!dirty.IsEmpty())
+      MarkDirty(dirty);
+  }
+  m_lastBounds = bounds;
+  m_flushed = false;
+}
+
+CRect CRenderer::GetBounds(const SElement& e) const
+{
+  const CDVDOverlay& o = *e.overlay_dvd;
+
+  if (o.IsOverlayType(DVDOVERLAY_TYPE_TEXT) || o.IsOverlayType(DVDOVERLAY_TYPE_SSA))
+  {
+    CRect images;
+    for (const ASS_Image* image = e.renderedImages; image; image = image->next)
+      images.Union(CRect(image->dst_x, image->dst_y, image->dst_x + image->w,
+                         image->dst_y + image->h));
+    if (images.IsEmpty())
+      return CRect();
+
+    // COverlayGlyphGLES covers the frame and places each image at its frame position
+    COverlayPlacement glyphs;
+    glyphs.PlaceGlyphs();
+    const SRenderState state = GetRenderState(glyphs);
+    if (e.renderedFrameWidth > 0.0f && e.renderedFrameHeight > 0.0f)
+    {
+      const float scaleX = state.width / e.renderedFrameWidth;
+      const float scaleY = state.height / e.renderedFrameHeight;
+      return CRect(state.x + images.x1 * scaleX, state.y + images.y1 * scaleY,
+                   state.x + images.x2 * scaleX, state.y + images.y2 * scaleY);
+    }
+  }
+  else if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) || o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
+  {
+    // a converted overlay keeps the placement it was drawn with
+    COverlayPlacement placement;
+    const COverlay* overlay = &placement;
+    const auto it = o.m_textureid ? m_textureCache.find(o.m_textureid) : m_textureCache.end();
+    if (it != m_textureCache.end())
+    {
+      overlay = it->second.get();
+    }
+    else if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE))
+    {
+      placement.PlaceImage(static_cast<const CDVDOverlayImage&>(o), m_rs);
+    }
+    else
+    {
+      // the bitmap before the crop to its visible pixels, which only shrinks it
+      const CDVDOverlaySpu& spu = static_cast<const CDVDOverlaySpu&>(o);
+      placement.PlaceAbsolute(spu.x, spu.y, spu.width, spu.height);
+    }
+
+    return overlay->GetDrawRect(GetRenderState(*overlay));
+  }
+
+  const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  return CRect(0, 0, context.GetWidth(), context.GetHeight());
 }
 
 std::shared_ptr<COverlay> CRenderer::ConvertLibass(SElement& e)

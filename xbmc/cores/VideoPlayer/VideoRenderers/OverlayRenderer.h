@@ -49,6 +49,11 @@ namespace OVERLAY {
    */
   void MarkDirty();
 
+  /*!
+   * \brief Mark a screen rect of overlays for the next render pass
+   */
+  void MarkDirty(const CRect& rect);
+
   class COverlay
   {
   public:
@@ -217,6 +222,8 @@ namespace OVERLAY {
     void Render(COverlay* o);
     // Where Render(COverlay*) draws the overlay, from its placement and the video rects
     SRenderState GetRenderState(const COverlay& o) const;
+    // Screen rect an element draws this frame, without converting it; empty if nothing
+    CRect GetBounds(const SElement& e) const;
     std::shared_ptr<COverlay> Convert(SElement& e);
     // Build a COverlay (cached or freshly created) from the libass output
     // already produced by PrepareOverlays. Does not call ass_render_frame.
@@ -264,5 +271,9 @@ namespace OVERLAY {
     // to detect arrival/disappearance transitions (image/SPU have no
     // per-frame change signal of their own, unlike libass detect_change).
     bool m_prevHadImageSpu{false};
+    // Screen rect of the overlays shown last frame, so a change or a disappearance also
+    // redraws where they were; Flush only flags it, as it may run off the GUI thread
+    CRect m_lastBounds;
+    bool m_flushed{false};
   };
 }
