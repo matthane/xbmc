@@ -37,6 +37,14 @@ using namespace KODI;
 using namespace KODI::WINDOWING::AML;
 using namespace std::chrono_literals;
 
+namespace
+{
+bool CoversSurface(const CRect& rect, int width, int height)
+{
+  return rect.x1 <= 0 && rect.y1 <= 0 && rect.x2 >= width && rect.y2 >= height;
+}
+} // namespace
+
 // shared with the job, which may outlive the window system; nodes nobody wants are dropped
 struct CWinSystemAmlogicGLESContext::CLut3DBuild
 {
@@ -411,24 +419,28 @@ void CWinSystemAmlogicGLESContext::DecideBufferAge(bool guiWillRender)
   // the stock value, under the other algorithms and while partial redraw cannot work
   m_frameBufferAge = 2;
   m_frameForcedFull = false;
+  m_frameDamage = CRect();
   // regions age once per Render call, so they match the buffers only with one Render
   // call per swap, which stereo breaks
   m_canRedrawPartially =
       m_eglBufferAge && GetGfxContext().GetStereoMode() == RenderStereoMode::OFF;
-  const bool partial =
+  m_partialFrame =
       guiWillRender &&
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
           DIRTYREGION_SOLVER_UNION;
   // no region tracks what the buffers presented meanwhile hold
-  if (partial && !m_canRedrawPartially)
+  if (m_partialFrame && !m_canRedrawPartially)
+  {
+    m_partialFrame = false;
     m_fullRedrawRequest++;
+  }
   m_frameFullRedraw = m_fullRedrawRequest;
-  if (!partial || !m_canRedrawPartially)
+  if (!m_partialFrame)
     return;
 
   // an unswapped frame aged the regions for nothing, and the window manager draws the
   // dirty region overlay in a full pass
-  m_frameForcedFull = m_fullRedrawRequest != m_fullRedrawDone || m_unswapped || m_guiCompositing;
+  m_frameForcedFull = m_fullRedrawRequest != m_fullRedrawDone || m_unswapped;
   if (m_frameForcedFull ||
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiVisualizeDirtyRegions)
   {
@@ -453,9 +465,31 @@ bool CWinSystemAmlogicGLESContext::CanRedrawPartially() const
 
 void CWinSystemAmlogicGLESContext::SetDirtyRegions(const CDirtyRegionList& dirtyRegions)
 {
-  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
+  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions !=
       DIRTYREGION_SOLVER_UNION)
-    m_pGLContext->SetDamagedRegions(dirtyRegions);
+    return;
+
+  m_pGLContext->SetDamagedRegions(dirtyRegions);
+
+  if (!m_guiPassInFbo)
+    return;
+
+  for (const auto& region : dirtyRegions)
+    m_frameDamage.Union(region);
+  m_guiDamaged = true;
+  // a clean FBO needs no clear; clearing all of it for a smaller damage would write it
+  // all back on every frame
+  const bool whole = CoversSurface(m_frameDamage, m_nWidth, m_nHeight);
+  if (!m_guiFboClean)
+  {
+    if (whole)
+      ResetScissors();
+    else
+      SetScissors(m_frameDamage);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+  }
+  m_guiFboClean = m_guiFboClean || whole;
 }
 
 bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
@@ -741,6 +775,8 @@ void CWinSystemAmlogicGLESContext::ResetHdrGuiSession()
 bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
 {
   DecideBufferAge(guiWillRender);
+  m_guiPassInFbo = false;
+  m_guiDamaged = false;
 
   if (!m_guiCompositing)
     return false;
@@ -837,13 +873,16 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
     return false;
 
   // Clear only when the FBO holds stale content; idle frames are already clean.
-  if (!m_guiFboClean)
+  // In partial redraw only a full redraw clears it all; SetDirtyRegions clears
+  // the damage of a partial one.
+  if (!m_guiFboClean && (!m_partialFrame || m_frameBufferAge == 0))
   {
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     m_guiFboClean = true;
   }
 
+  m_guiPassInFbo = true;
   return true;
 }
 
@@ -853,10 +892,25 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
   if (!m_guiWillRender)
     return;
 
+  // a partial redraw with no damage drew nothing and presents nothing
+  if (m_partialFrame && m_frameBufferAge != 0 && !m_guiDamaged)
+  {
+    m_guiFbo.EndRender();
+    m_guiWillRender = false;
+    return;
+  }
+
   // taken before the raw HDR PGS pass, which draws on the surface, not into the FBO
   m_guiCompositeBounds = GetGUIDrawBounds();
 
   m_guiFbo.EndRender();
+
+  // outside the damage the buffer still holds an older frame
+  if (m_guiDamaged && !CoversSurface(m_frameDamage, m_nWidth, m_nHeight))
+  {
+    SetScissors(m_frameDamage);
+    m_guiCompositeBounds.Intersect(m_frameDamage);
+  }
 
   // Clear the backbuffer before video renders. In the FBO compositing path,
   // video renders in the RenderEx pass with clear=false, so DrawBlackBars is
@@ -872,6 +926,10 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
 // the next frame's rendering sets its own state.
 void CWinSystemAmlogicGLESContext::CompositeGui()
 {
+  // the next frame's clears must not be clipped to the damage
+  if (m_guiDamaged)
+    ResetScissors();
+
   if (!m_guiFbo.IsValid() || !m_guiFbo.IsBound() || !m_compositeShader)
     return;
   CGuiCompositeShaderGLES& shader = GetCompositeShader();
@@ -881,9 +939,10 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
   // m_guiFboClean means "FBO is empty/clean" (no composite work needed).
   if (m_guiWillRender)
   {
-    // bounds, not the element count: add-on renders and opaque clears are not counted
+    // bounds, not the element count: add-on renders and opaque clears are not counted;
+    // outside the damage of a partial redraw the FBO is clean only if it was before
     const bool guiEmpty = m_guiCompositeBounds.IsEmpty();
-    m_guiFboClean = guiEmpty;
+    m_guiFboClean = guiEmpty && (m_guiFboClean || !m_guiDamaged);
     if (guiEmpty)
       return;
   }

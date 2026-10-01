@@ -92,7 +92,9 @@ private:
   void DecideBufferAge(bool guiWillRender);
   bool m_eglBufferAge{false};
   bool m_canRedrawPartially{false};
+  bool m_partialFrame{false};
   int m_frameBufferAge{2};
+  CRect m_frameDamage;
   bool m_frameForcedFull{false};
   // changes no dirty region covers (compositing, LUTs, FBO) request a full redraw; done
   // is the request the latest presented forced full redraw covered
@@ -111,6 +113,9 @@ private:
   bool m_guiFboClean{false};
   // window-space bounds of what the GUI pass drew into the FBO this frame
   CRect m_guiCompositeBounds;
+  // partial redraw: the GUI pass renders into the FBO, and the frame's damage reached it
+  bool m_guiPassInFbo{false};
+  bool m_guiDamaged{false};
   // Whether the GUI render pass will run this frame; set by BeginGuiComposite.
   bool m_guiWillRender{true};
   // Transfer function the LUTs were built for, and the GUI reference white
