@@ -1474,8 +1474,11 @@ bool CGUIWindowManager::Render()
   CDirtyRegionList dirtyRegions = m_tracker.GetDirtyRegions();
 
   bool hasRendered = false;
-  const int algorithm =
+  int algorithm =
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions;
+  if ((algorithm == DIRTYREGION_SOLVER_UNION || algorithm == DIRTYREGION_SOLVER_COST_REDUCTION) &&
+      !CServiceBroker::GetWinSystem()->CanRedrawPartially())
+    algorithm = DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE;
   // in partial redraw a frame with no region presents nothing, so the shown buffer stays
   // current whatever the age of the back buffer
   const bool nothingToDraw =
@@ -1489,7 +1492,7 @@ bool CGUIWindowManager::Render()
     RenderPass();
     hasRendered = true;
   }
-  else if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
+  else if (algorithm == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
   {
     if (!dirtyRegions.empty())
     {
