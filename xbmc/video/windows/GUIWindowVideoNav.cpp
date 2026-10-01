@@ -253,6 +253,8 @@ bool CGUIWindowVideoNav::OnMessage(CGUIMessage& message)
     break;
     // update the display
     case GUI_MSG_REFRESH_THUMBS:
+      if (HoldWhileUpdating(message))
+        return true;
       Refresh();
       break;
   }

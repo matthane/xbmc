@@ -38,6 +38,7 @@
 #include "filesystem/MultiPathDirectory.h"
 #include "filesystem/PluginDirectory.h"
 #include "filesystem/SmartPlaylistDirectory.h"
+#include "filesystem/SpecialProtocol.h"
 #include "filesystem/VirtualDirectory.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIEditControl.h"
@@ -68,6 +69,8 @@
 #include "utils/log.h"
 #include "view/GUIViewState.h"
 
+#include <algorithm>
+
 #define CONTROL_BTNVIEWASICONS       2
 #define CONTROL_BTNSORTBY            3
 #define CONTROL_BTNSORTASC           4
@@ -80,11 +83,32 @@
 #define PROPERTY_SORT_ASCENDING     "sort.ascending"
 
 #define PLUGIN_REFRESH_DELAY 200
+#define NETWORK_REFRESH_DELAY 201
 
 using namespace ADDON;
 using namespace KODI;
 using namespace KODI::MESSAGING;
 using namespace std::chrono_literals;
+
+namespace
+{
+// unlike URIUtils::IsRemote, virtual protocols such as pvr:// or playlists do not count
+bool IsNetworkListing(const std::string& path)
+{
+  if (URIUtils::IsMultiPath(path))
+  {
+    std::vector<std::string> paths;
+    XFILE::CMultiPathDirectory::GetPaths(path, paths);
+    return std::ranges::any_of(paths, IsNetworkListing);
+  }
+  if (URIUtils::IsSpecial(path))
+    return IsNetworkListing(CSpecialProtocol::TranslatePath(path));
+  const CURL url(path);
+  if (url.HasParentInHostname())
+    return IsNetworkListing(url.GetHostName());
+  return URIUtils::IsNetworkFilesystem(path);
+}
+} // namespace
 
 CGUIMediaWindow::CGUIMediaWindow(int id, const char *xmlFile)
     : CGUIWindow(id, xmlFile)
@@ -341,6 +365,8 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
       }
       else if (message.GetParam1()==GUI_MSG_UPDATE_SOURCES)
       { // State of the sources changed, so update our view
+        if (HoldWhileUpdating(message))
+          return true;
         if ((m_vecItems->IsVirtualDirectoryRoot() ||
              m_vecItems->IsSourcesPath()) && IsActive())
         {
@@ -358,6 +384,8 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
       }
       else if (message.GetParam1()==GUI_MSG_UPDATE && IsActive())
       {
+        if (HoldWhileUpdating(message))
+          return true;
         if (m_vecItemsUpdating)
         {
           CLog::Log(LOGWARNING, "CGUIMediaWindow::OnMessage - updating in progress");
@@ -415,6 +443,8 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
       }
       else if (message.GetParam1()==GUI_MSG_UPDATE_PATH)
       {
+        if (HoldWhileUpdating(message))
+          return true;
         if (IsActive())
         {
           if((message.GetStringParam() == m_vecItems->GetPath()) ||
@@ -497,6 +527,15 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
     break;
   case GUI_MSG_WINDOW_INIT:
     {
+      if (IsDeferredInit(message))
+      {
+        // the window may have closed before this message was dispatched
+        if (!IsActive())
+          return false;
+        LoadDeferredDirectory();
+        return true;
+      }
+
       if (m_vecItems->GetPath() == "?")
         m_vecItems->SetPath("");
 
@@ -560,6 +599,8 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
       // application is already shutting down.
       if (g_application.IsStopping())
         return true;
+
+      m_initItemPath = message.GetStringParam(0);
     }
     break;
   }
@@ -1700,7 +1741,21 @@ void CGUIMediaWindow::OnInitWindow()
   // those scripts may open windows and we can't open a window
   // while opening this one.
   // for plugin sources delay call to Refresh
-  if (!URIUtils::IsPlugin(m_vecItems->GetPath()))
+  // network listings are deferred too, so the window animates while the busy wait runs
+  const bool isPlugin = URIUtils::IsPlugin(m_vecItems->GetPath());
+  const bool deferNetwork = !isPlugin && IsNetworkListing(m_vecItems->GetPath());
+
+  // a failed fetch may fall back to another path, so a deferred listing applies this afterwards
+  m_updateStartDirectoryOnRefresh = deferNetwork && updateStartDirectory;
+
+  if (deferNetwork)
+  {
+    // the subclasses select the item named at activation once the listing exists
+    CGUIMessage msg(GUI_MSG_WINDOW_INIT, 0, 0, WINDOW_INVALID, NETWORK_REFRESH_DELAY);
+    msg.SetStringParam(m_initItemPath);
+    CServiceBroker::GetGUI()->GetWindowManager().SendThreadMessage(msg, GetID());
+  }
+  else if (!isPlugin)
   {
     Refresh();
   }
@@ -1710,7 +1765,7 @@ void CGUIMediaWindow::OnInitWindow()
     CServiceBroker::GetGUI()->GetWindowManager().SendThreadMessage(msg, GetID());
   }
 
-  if (updateStartDirectory)
+  if (updateStartDirectory && !m_updateStartDirectoryOnRefresh)
   {
     // reset the start directory to the path of the items
     m_startDirectory = m_vecItems->GetPath();
@@ -1722,6 +1777,48 @@ void CGUIMediaWindow::OnInitWindow()
   m_backgroundLoad = true;
 
   CGUIWindow::OnInitWindow();
+
+  if (!deferNetwork)
+    OnInitialDirectoryLoaded();
+}
+
+void CGUIMediaWindow::LoadDeferredDirectory()
+{
+  {
+    CUpdateGuard ug(m_vecItemsUpdating);
+    m_holdMessages = true;
+    Refresh();
+    m_holdMessages = false;
+  }
+  if (m_updateStartDirectoryOnRefresh)
+  {
+    m_startDirectory = m_vecItems->GetPath();
+    SetHistoryForPath(m_startDirectory);
+  }
+  SetInitialVisibility();
+  RestoreControlStates();
+  SetInitialVisibility();
+  OnInitialDirectoryLoaded();
+  // run the refresh requests in arrival order, as after a synchronous fetch
+  std::vector<CGUIMessage> heldMessages;
+  heldMessages.swap(m_heldMessages);
+  for (CGUIMessage& heldMessage : heldMessages)
+    OnMessage(heldMessage);
+}
+
+bool CGUIMediaWindow::HoldWhileUpdating(const CGUIMessage& message)
+{
+  if (!m_holdMessages || !m_vecItemsUpdating)
+    return false;
+
+  m_heldMessages.push_back(message);
+  return true;
+}
+
+bool CGUIMediaWindow::IsDeferredInit(const CGUIMessage& message)
+{
+  return message.GetMessage() == GUI_MSG_WINDOW_INIT &&
+         message.GetParam2() == NETWORK_REFRESH_DELAY;
 }
 
 void CGUIMediaWindow::SaveControlStates()
