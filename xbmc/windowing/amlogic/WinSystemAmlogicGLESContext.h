@@ -16,6 +16,7 @@
 #include "utils/GlobalsHandling.h"
 #include "utils/StreamDetails.h"
 
+#include <atomic>
 #include <mutex>
 
 namespace KODI
@@ -52,6 +53,10 @@ public:
   bool SupportsStereo(const RenderStereoMode mode) const override;
   void PresentRender(bool rendered, bool videoLayer) override;
 
+  bool BindTextureUploadContext() override;
+  bool UnbindTextureUploadContext() override;
+  bool HasContext() override;
+
   // GUI compositing for HDR
   bool SetGuiCompositing(int colorTransfer) override;
   uint64_t ConfigureHdrGuiSession(uint64_t owner, int colorTransfer, bool dvGraphics) override;
@@ -74,6 +79,8 @@ private:
   std::unique_ptr<CEGLContextUtils> m_pGLContext;
   StreamHdrType m_hdrType = StreamHdrType::HDR_TYPE_NONE;
   uint64_t m_presentStepSeen{0};
+  // set by the first job thread that could not bind the upload context
+  std::atomic<bool> m_uploadContextFailed{false};
 
   bool m_guiCompositing{false};
   CFrameBufferObject m_guiFbo;
