@@ -1474,11 +1474,17 @@ bool CGUIWindowManager::Render()
   CDirtyRegionList dirtyRegions = m_tracker.GetDirtyRegions();
 
   bool hasRendered = false;
+  const int algorithm =
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions;
+  // in partial redraw a frame with no region presents nothing, so the shown buffer stays
+  // current whatever the age of the back buffer
+  const bool nothingToDraw =
+      dirtyRegions.empty() &&
+      (algorithm == DIRTYREGION_SOLVER_UNION || algorithm == DIRTYREGION_SOLVER_COST_REDUCTION);
   // If we visualize the regions we will always render the entire viewport
   // If the buffer age is zero, the current content is undefined and has to be rendered
-  if (visualizeDirtyRegions || bufferAge == 0 ||
-      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
-          DIRTYREGION_SOLVER_FILL_VIEWPORT_ALWAYS)
+  if (visualizeDirtyRegions || (bufferAge == 0 && !nothingToDraw) ||
+      algorithm == DIRTYREGION_SOLVER_FILL_VIEWPORT_ALWAYS)
   {
     RenderPass();
     hasRendered = true;
