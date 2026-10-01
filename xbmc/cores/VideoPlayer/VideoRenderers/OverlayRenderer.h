@@ -61,6 +61,27 @@ namespace OVERLAY {
 
     virtual void Render(SRenderState& state) = 0;
 
+    /*!
+     * \brief Set the placement of an image overlay (PGS, DVB), as drawn
+     * \param rSource The video source rect
+     */
+    void PlaceImage(const CDVDOverlayImage& o, const CRect& rSource);
+
+    /*!
+     * \brief Set the placement of an SPU, or an image without a source size, in video pixels
+     */
+    void PlaceAbsolute(float x, float y, float width, float height);
+
+    /*!
+     * \brief The screen rect an image or SPU overlay is drawn in for a render state
+     */
+    CRect GetDrawRect(const SRenderState& state) const;
+
+    /*!
+     * \brief Set the placement of a libass overlay, whose glyphs cover the video frame
+     */
+    void PlaceGlyphs();
+
     enum EType
     {
       TYPE_NONE,
@@ -194,6 +215,8 @@ namespace OVERLAY {
     };
 
     void Render(COverlay* o);
+    // Where Render(COverlay*) draws the overlay, from its placement and the video rects
+    SRenderState GetRenderState(const COverlay& o) const;
     std::shared_ptr<COverlay> Convert(SElement& e);
     // Build a COverlay (cached or freshly created) from the libass output
     // already produced by PrepareOverlays. Does not call ass_render_frame.

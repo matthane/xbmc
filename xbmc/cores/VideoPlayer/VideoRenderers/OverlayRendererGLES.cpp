@@ -233,45 +233,7 @@ COverlayTextureGLES::COverlayTextureGLES(const CDVDOverlayImage& o, CRect& rSour
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  if (o.source_width > 0 && o.source_height > 0)
-  {
-    m_pos = POSITION_RELATIVE;
-    m_x = (0.5f * o.width + o.x) / o.source_width;
-    m_y = (0.5f * o.height + o.y) / o.source_height;
-
-    const float subRatio{static_cast<float>(o.source_width) / o.source_height};
-    const float vidRatio{rSource.Width() / rSource.Height()};
-
-    // We always consider aligning 4/3 subtitles to the video,
-    // for example SD DVB subtitles (4/3) must be stretched on fullhd video
-
-    if (std::fabs(subRatio - vidRatio) < 0.001f || IsSquareResolution(subRatio))
-    {
-      m_align = ALIGN_VIDEO;
-      m_width = static_cast<float>(o.width) / o.source_width;
-      m_height = static_cast<float>(o.height) / o.source_height;
-    }
-    else
-    {
-      // We should have a re-encoded/cropped (removed black bars) video source.
-      // Then we cannot align to video otherwise the subtitles will be deformed
-      // better align to screen by keeping the aspect-ratio.
-      m_align = ALIGN_SCREEN_AR;
-      m_width = static_cast<float>(o.width);
-      m_height = static_cast<float>(o.height);
-      m_source_width = static_cast<float>(o.source_width);
-      m_source_height = static_cast<float>(o.source_height);
-    }
-  }
-  else
-  {
-    m_align = ALIGN_VIDEO;
-    m_pos = POSITION_ABSOLUTE;
-    m_x = static_cast<float>(o.x);
-    m_y = static_cast<float>(o.y);
-    m_width = static_cast<float>(o.width);
-    m_height = static_cast<float>(o.height);
-  }
+  PlaceImage(o, rSource);
 }
 
 std::shared_ptr<COverlay> COverlay::Create(const CDVDOverlaySpu& o)
@@ -299,12 +261,7 @@ COverlayTextureGLES::COverlayTextureGLES(const CDVDOverlaySpu& o)
 
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  m_align = ALIGN_VIDEO;
-  m_pos = POSITION_ABSOLUTE;
-  m_x = static_cast<float>(min_x + o.x);
-  m_y = static_cast<float>(min_y + o.y);
-  m_width = static_cast<float>(max_x - min_x);
-  m_height = static_cast<float>(max_y - min_y);
+  PlaceAbsolute(min_x + o.x, min_y + o.y, max_x - min_x, max_y - min_y);
   m_pma = !!USE_PREMULTIPLIED_ALPHA;
 }
 
@@ -315,12 +272,7 @@ std::shared_ptr<COverlay> COverlay::Create(ASS_Image* images, float width, float
 
 COverlayGlyphGLES::COverlayGlyphGLES(ASS_Image* images, float width, float height)
 {
-  m_width = 1.0;
-  m_height = 1.0;
-  m_align = ALIGN_SCREEN;
-  m_pos = POSITION_RELATIVE;
-  m_x = 0.0f;
-  m_y = 0.0f;
+  PlaceGlyphs();
 
   SQuads quads;
   if (!convert_quad(images, quads, static_cast<int>(width)))
@@ -515,25 +467,7 @@ void COverlayTextureGLES::Render(SRenderState& state)
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
-  CRect rd;
-  if (m_pos == POSITION_RELATIVE)
-  {
-    float top = state.y - state.height * 0.5f;
-    float bottom = state.y + state.height * 0.5f;
-    float left = state.x - state.width * 0.5f;
-    float right = state.x + state.width * 0.5f;
-
-    rd.SetRect(left, top, right, bottom);
-  }
-  else
-  {
-    float top = state.y;
-    float bottom = state.y + state.height;
-    float left = state.x;
-    float right = state.x + state.width;
-
-    rd.SetRect(left, top, right, bottom);
-  }
+  CRect rd = GetDrawRect(state);
 
   CRenderSystemGLES* renderSystem =
       dynamic_cast<CRenderSystemGLES*>(CServiceBroker::GetRenderSystem());
