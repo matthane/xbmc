@@ -153,7 +153,8 @@ bool CGUIWindowMusicBase::OnMessage(CGUIMessage& message)
     {
       m_dlgProgress = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
 
-      m_musicdatabase.Open();
+      if (!m_musicdatabase.IsOpen())
+        m_musicdatabase.Open();
 
       if (!CGUIMediaWindow::OnMessage(message))
         return false;
