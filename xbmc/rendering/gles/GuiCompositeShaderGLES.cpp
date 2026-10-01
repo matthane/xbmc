@@ -57,8 +57,9 @@ float SRGBToLinear(float v)
 
 CGuiCompositeShaderGLES::CGuiCompositeShaderGLES(const std::string& prefix)
 {
-  const std::string defines =
-      prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) + ".0\n";
+  const std::string defines = prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) +
+                              ".0\n#define KODI_PQ_LUT_SIZE " + std::to_string(PQ_LUT_SIZE) +
+                              ".0\n";
   VertexShader()->LoadSource("gles_gui_composite.vert", defines);
   PixelShader()->LoadSource("gles_gui_composite.frag", defines);
 }
@@ -105,7 +106,7 @@ bool CGuiCompositeShaderGLES::OnEnabled()
   return true;
 }
 
-GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data)
+GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data, GLint filter)
 {
   while (glGetError() != GL_NO_ERROR)
   {
@@ -143,8 +144,8 @@ GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data)
                 data.size());
   }
 
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -178,8 +179,7 @@ float CGuiCompositeShaderGLES::PeakFromPQCode(float code)
   // the same setting mean the same luminance on both paths.
   //
   // Clamped to 1000 nits. The raw curve reaches 10000 nits at the top of the
-  // slider, which no panel can show, and the PQ LUT only has LUT_SIZE entries
-  // spread over [0, peak] - stretching it that far crushes GUI shadows badly.
+  // slider, which no panel can show.
   // The clamp engages around slider 64 (code 0.748), so the top third of the
   // range is deliberately flat; CreateLUTs logs the resolved nits so a log shows
   // when it is in effect. Above that point this intentionally stops tracking the
@@ -190,14 +190,15 @@ float CGuiCompositeShaderGLES::PeakFromPQCode(float code)
 std::vector<float> CGuiCompositeShaderGLES::GeneratePQLUT(float sdrPeak)
 {
   // PQ is display-referred (absolute luminance). sdrPeak is in PQ-normalized
-  // units (nits / 10000), e.g. 203 nits = 0.0203. The LUT maps the full [0,1]
-  // texture coordinate range to ForwardPQ([0, sdrPeak]), giving full LUT
-  // resolution across the actual SDR luminance range.
-  std::vector<float> lut(LUT_SIZE);
-  for (int i = 0; i < LUT_SIZE; i++)
+  // units (nits / 10000), e.g. 203 nits = 0.0203. The shader indexes the LUT by
+  // sqrt(linear), so entry i holds ForwardPQ(sdrPeak * (i / (PQ_LUT_SIZE - 1))^2):
+  // a uniform spacing in linear light leaves the darkest step wider than a
+  // dozen output codes.
+  std::vector<float> lut(PQ_LUT_SIZE);
+  for (int i = 0; i < PQ_LUT_SIZE; i++)
   {
-    float L = static_cast<float>(i) / (LUT_SIZE - 1) * sdrPeak;
-    lut[i] = ForwardPQ(L);
+    const float x = static_cast<float>(i) / (PQ_LUT_SIZE - 1);
+    lut[i] = ForwardPQ(x * x * sdrPeak);
   }
   return lut;
 }
@@ -209,7 +210,7 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
   // failure - the GUI composites to solid black, and a caller that retries (a
   // live SetSdrPeak change) would thrash glDeleteTextures/glTexImage2D every
   // frame. Failure must be a no-op so the previous LUTs keep working.
-  GLuint degamma = CreateLUTTexture(GenerateDegammaLUT());
+  GLuint degamma = CreateLUTTexture(GenerateDegammaLUT(), GL_LINEAR);
   if (!degamma)
   {
     CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - failed to create degamma LUT");
@@ -222,7 +223,7 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
 
   if (colorTransfer == AVCOL_TRC_SMPTE2084)
   {
-    tf = CreateLUTTexture(GeneratePQLUT(m_sdrPeak));
+    tf = CreateLUTTexture(GeneratePQLUT(m_sdrPeak), GL_NEAREST);
     if (!tf)
     {
       CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - failed to create PQ LUT");
@@ -231,7 +232,7 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
     }
     CLog::Log(LOGDEBUG,
               "CGuiCompositeShaderGLES::CreateLUTs - created PQ LUT ({} entries, {:.0f} nits)",
-              LUT_SIZE, m_sdrPeak * 10000.0f);
+              PQ_LUT_SIZE, m_sdrPeak * 10000.0f);
   }
   else if (colorTransfer == AVCOL_TRC_ARIB_STD_B67)
   {
