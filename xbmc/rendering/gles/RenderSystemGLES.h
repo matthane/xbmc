@@ -123,6 +123,16 @@ public:
 
   void Project(float &x, float &y, float &z) override;
 
+  // Window-space bounds (pixels, Y down) of this frame's GUI draws, tracked while the
+  // HDR GUI composite is active; every counted draw and opaque clear adds to them.
+  void AddGUIDrawBounds(const CRect& rect) override;
+  // Add a box in draw coordinates, projected with the current projection and model
+  // view, or with `matrix` (projection times model view) when given.
+  void AddGUIDrawBounds(
+      float x1, float y1, float z1, float x2, float y2, float z2, const GLfloat* matrix = nullptr);
+  CRect GetGUIDrawBounds() const { return m_guiDrawBounds; }
+  bool IsTrackingGUIDrawBounds() const { return m_trackGUIDrawBounds; }
+
   std::string GetShaderPath(const std::string& filename) override;
 
   void InitialiseShaders();
@@ -162,4 +172,10 @@ protected:
   ShaderMethodGLES m_method = ShaderMethodGLES::SM_DEFAULT;
 
   GLint      m_viewPort[4];
+
+  bool m_trackGUIDrawBounds{false};
+  CRect m_guiDrawBounds;
+  // what the scissor test clips a clear to, window space
+  CRect m_scissor;
+  bool m_scissorTest{true};
 };

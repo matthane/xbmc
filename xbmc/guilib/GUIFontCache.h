@@ -14,6 +14,7 @@
 */
 
 #include "utils/ColorUtils.h"
+#include "utils/Geometry.h"
 #include "utils/TransformMatrix.h"
 
 #include <algorithm>
@@ -231,13 +232,18 @@ struct CVertexBuffer
 #endif
   BufferHandleType bufferHandle = BUFFER_HANDLE_INIT; // this is really a GLuint
   size_t size = 0;
+  // bounding box of the vertices, in the coordinates they are drawn with (z is 0)
+  CRect bounds;
   CVertexBuffer() : m_font(nullptr) {}
-  CVertexBuffer(BufferHandleType bufferHandle, size_t size, const CGUIFontTTF* font)
-    : bufferHandle(bufferHandle), size(size), m_font(font)
+  CVertexBuffer(BufferHandleType bufferHandle,
+                size_t size,
+                const CGUIFontTTF* font,
+                const CRect& bounds = CRect())
+    : bufferHandle(bufferHandle), size(size), bounds(bounds), m_font(font)
   {
   }
   CVertexBuffer(const CVertexBuffer& other)
-    : bufferHandle(other.bufferHandle), size(other.size), m_font(other.m_font)
+    : bufferHandle(other.bufferHandle), size(other.size), bounds(other.bounds), m_font(other.m_font)
   {
     /* In practice, the copy constructor is only called before a vertex buffer
      * has been attached. If this should ever change, we'll need another support
@@ -251,6 +257,7 @@ struct CVertexBuffer
     bufferHandle = other.bufferHandle;
     other.bufferHandle = 0;
     size = other.size;
+    bounds = other.bounds;
     m_font = other.m_font;
     return *this;
   }

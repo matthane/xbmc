@@ -18,6 +18,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <algorithm>
 #include <cstddef>
 
 void CGUITextureGLES::Register()
@@ -164,6 +165,22 @@ void CGUITextureGLES::End()
 
     glDrawElements(GL_TRIANGLES, m_packedVertices.size()*6 / 4, GL_UNSIGNED_SHORT, m_idx.data());
     CRenderSystemBase::m_GUIElementCount++;
+
+    if (m_renderSystem->IsTrackingGUIDrawBounds())
+    {
+      PackedVertex low = m_packedVertices.front();
+      PackedVertex high = low;
+      for (const auto& vertex : m_packedVertices)
+      {
+        low.x = std::min(low.x, vertex.x);
+        low.y = std::min(low.y, vertex.y);
+        low.z = std::min(low.z, vertex.z);
+        high.x = std::max(high.x, vertex.x);
+        high.y = std::max(high.y, vertex.y);
+        high.z = std::max(high.z, vertex.z);
+      }
+      m_renderSystem->AddGUIDrawBounds(low.x, low.y, low.z, high.x, high.y, high.z);
+    }
 
     if (m_diffuse.size())
       glDisableVertexAttribArray(tex1Loc);
@@ -347,6 +364,7 @@ void CGUITextureGLES::DrawQuad(const CRect& rect,
 
   glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_BYTE, idx);
   CRenderSystemBase::m_GUIElementCount++;
+  renderSystem->AddGUIDrawBounds(rect.x1, rect.y1, 0.0f, rect.x2, rect.y2, 0.0f);
 
   glDisableVertexAttribArray(posLoc);
   if (texture)

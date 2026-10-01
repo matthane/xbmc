@@ -10,6 +10,8 @@
 
 #include "ServiceBroker.h"
 #include "guilib/IRenderingCallback.h"
+#include "rendering/RenderSystem.h"
+#include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
 #include <mutex>
@@ -93,6 +95,10 @@ void CGUIRenderingControl::Render()
     // a viewport??
     CServiceBroker::GetWinSystem()->GetGfxContext().SetViewPort(m_posX, m_posY, m_width, m_height);
     CServiceBroker::GetWinSystem()->GetGfxContext().CaptureStateBlock();
+    // the add-on may set its own viewport and draws with the scissor test off
+    CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+    CServiceBroker::GetRenderSystem()->AddGUIDrawBounds(
+        CRect(0, 0, context.GetWidth(), context.GetHeight()));
     m_callback->Render();
     CServiceBroker::GetWinSystem()->GetGfxContext().ApplyStateBlock();
     CServiceBroker::GetWinSystem()->GetGfxContext().RestoreViewPort();

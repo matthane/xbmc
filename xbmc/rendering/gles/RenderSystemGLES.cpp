@@ -31,6 +31,10 @@
 #include "utils/EGLUtils.h"
 #endif
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 using namespace std::chrono_literals;
 
 CRenderSystemGLES::CRenderSystemGLES()
@@ -177,6 +181,8 @@ bool CRenderSystemGLES::BeginRender()
     return false;
 
   m_GUIElementCount = 0;
+  m_guiDrawBounds = CRect();
+  m_trackGUIDrawBounds = CServiceBroker::GetWinSystem()->IsHdrComposite();
 
   const bool useLimited = CServiceBroker::GetWinSystem()->UseLimitedColor() &&
                           !CServiceBroker::GetWinSystem()->IsHdrComposite();
@@ -243,6 +249,9 @@ bool CRenderSystemGLES::ClearBuffers(KODI::UTILS::COLOR::Color color)
 
   glClear(flags);
 
+  if (a > 0.0f)
+    AddGUIDrawBounds(m_scissorTest ? m_scissor : CRect(0, 0, m_width, m_height));
+
   return true;
 }
 
@@ -306,6 +315,7 @@ void CRenderSystemGLES::CaptureStateBlock()
   glMatrixTexture.Push();
 
   glDisable(GL_SCISSOR_TEST); // fixes FBO corruption on Macs
+  m_scissorTest = false;
   glActiveTexture(GL_TEXTURE0);
 //! @todo - NOTE: Only for Screensavers & Visualisations
 //  glColor3f(1.0, 1.0, 1.0);
@@ -322,6 +332,7 @@ void CRenderSystemGLES::ApplyStateBlock()
   glActiveTexture(GL_TEXTURE0);
   glEnable(GL_BLEND);
   glEnable(GL_SCISSOR_TEST);
+  m_scissorTest = true;
   glClear(GL_DEPTH_BUFFER_BIT);
 }
 
@@ -356,6 +367,56 @@ void CRenderSystemGLES::Project(float &x, float &y, float &z)
   }
 }
 
+void CRenderSystemGLES::AddGUIDrawBounds(const CRect& rect)
+{
+  if (!m_trackGUIDrawBounds)
+    return;
+
+  // outward to whole pixels, so every pixel the draw touches is inside
+  CRect bounds(std::floor(rect.x1), std::floor(rect.y1), std::ceil(rect.x2), std::ceil(rect.y2));
+  bounds.Intersect(CRect(0, 0, m_width, m_height));
+  m_guiDrawBounds.Union(bounds);
+}
+
+void CRenderSystemGLES::AddGUIDrawBounds(
+    float x1, float y1, float z1, float x2, float y2, float z2, const GLfloat* matrix)
+{
+  if (!m_trackGUIDrawBounds)
+    return;
+
+  static constexpr GLfloat identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const GLfloat* model = matrix ? identity : glMatrixModview.Get();
+  const GLfloat* project = matrix ? matrix : glMatrixProject.Get();
+
+  // the corners of the box bound its perspective projection
+  float minX = std::numeric_limits<float>::max();
+  float minY = std::numeric_limits<float>::max();
+  float maxX = std::numeric_limits<float>::lowest();
+  float maxY = std::numeric_limits<float>::lowest();
+  for (const float x : {x1, x2})
+  {
+    for (const float y : {y1, y2})
+    {
+      for (const float z : {z1, z2})
+      {
+        GLfloat winX;
+        GLfloat winY;
+        GLfloat winZ;
+        if (!CMatrixGL::Project(x, y, z, model, project, m_viewPort, &winX, &winY, &winZ))
+        {
+          AddGUIDrawBounds(CRect(0, 0, m_width, m_height));
+          return;
+        }
+        minX = std::min(minX, winX);
+        maxX = std::max(maxX, winX);
+        minY = std::min(minY, m_height - winY);
+        maxY = std::max(maxY, m_height - winY);
+      }
+    }
+  }
+  AddGUIDrawBounds(CRect(minX, minY, maxX, maxY));
+}
+
 void CRenderSystemGLES::CalculateMaxTexturesize()
 {
   // GLES cannot do PROXY textures to determine maximum size,
@@ -384,6 +445,9 @@ void CRenderSystemGLES::SetViewPort(const CRect& viewPort)
   m_viewPort[1] = m_height - viewPort.y1 - viewPort.Height();
   m_viewPort[2] = viewPort.Width();
   m_viewPort[3] = viewPort.Height();
+  // the glScissor above
+  m_scissor = CRect(m_viewPort[0], m_height - m_viewPort[1] - m_viewPort[3],
+                    m_viewPort[0] + m_viewPort[2], m_height - m_viewPort[1]);
 }
 
 bool CRenderSystemGLES::ScissorsCanEffectClipping()
@@ -417,6 +481,7 @@ void CRenderSystemGLES::SetScissors(const CRect &rect)
   GLint x2 = MathUtils::round_int(static_cast<double>(rect.x2));
   GLint y2 = MathUtils::round_int(static_cast<double>(rect.y2));
   glScissor(x1, m_height - y2, x2-x1, y2-y1);
+  m_scissor = CRect(x1, y1, x2, y2);
 }
 
 void CRenderSystemGLES::ResetScissors()
