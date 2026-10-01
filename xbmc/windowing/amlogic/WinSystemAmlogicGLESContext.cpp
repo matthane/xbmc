@@ -13,7 +13,9 @@
 #include "ServiceBroker.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
+#include "guilib/IDirtyRegionSolver.h"
 #include "jobs/JobManager.h"
+#include "settings/AdvancedSettings.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/AMLUtils.h"
@@ -118,6 +120,8 @@ bool CWinSystemAmlogicGLESContext::InitWindowSystem()
     m_pGLContext->Destroy();
     return false;
   }
+
+  m_eglBufferAge = m_pGLContext->HasBufferAge();
 
   if (CEGLUtils::HasExtension(GetEGLDisplay(), "EGL_ANDROID_native_fence_sync") &&
       CEGLUtils::HasExtension(GetEGLDisplay(), "EGL_KHR_fence_sync"))
@@ -320,6 +324,9 @@ void CWinSystemAmlogicGLESContext::PresentRender(bool rendered, bool videoLayer)
 {
   if (IsHotplugPending() || !IsPresentationReady())
   {
+    // the next render cannot build on what this one drew
+    if (rendered)
+      m_unswapped = true;
     KODI::TIME::Sleep(10ms);
     return;
   }
@@ -341,9 +348,22 @@ void CWinSystemAmlogicGLESContext::PresentRender(bool rendered, bool videoLayer)
     }
 #endif
 
-    // Ignore errors - eglSwapBuffers() sometimes fails during modeswaps on AML,
-    // there is probably nothing we can do about it
-    m_pGLContext->TrySwapBuffers();
+    // eglSwapBuffers() sometimes fails during modeswaps on AML, there is probably
+    // nothing we can do about it but redraw in full next time
+    if (m_pGLContext->TrySwapBuffers())
+    {
+      m_swapCount++;
+      if (m_frameForcedFull)
+      {
+        m_fullRedrawSwap = m_swapCount;
+        m_fullRedrawDone = m_frameFullRedraw;
+      }
+      m_unswapped = false;
+    }
+    else
+    {
+      m_unswapped = true;
+    }
 
 #if defined(EGL_ANDROID_native_fence_sync) && defined(EGL_KHR_fence_sync)
     if (m_eglFence)
@@ -386,8 +406,62 @@ void CWinSystemAmlogicGLESContext::PresentRender(bool rendered, bool videoLayer)
   }
 }
 
+void CWinSystemAmlogicGLESContext::DecideBufferAge(bool guiWillRender)
+{
+  // the stock value, under the other algorithms and while partial redraw cannot work
+  m_frameBufferAge = 2;
+  m_frameForcedFull = false;
+  // regions age once per Render call, so they match the buffers only with one Render
+  // call per swap, which stereo breaks
+  m_canRedrawPartially =
+      m_eglBufferAge && GetGfxContext().GetStereoMode() == RenderStereoMode::OFF;
+  const bool partial =
+      guiWillRender &&
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
+          DIRTYREGION_SOLVER_UNION;
+  // no region tracks what the buffers presented meanwhile hold
+  if (partial && !m_canRedrawPartially)
+    m_fullRedrawRequest++;
+  m_frameFullRedraw = m_fullRedrawRequest;
+  if (!partial || !m_canRedrawPartially)
+    return;
+
+  // an unswapped frame aged the regions for nothing, and the window manager draws the
+  // dirty region overlay in a full pass
+  m_frameForcedFull = m_fullRedrawRequest != m_fullRedrawDone || m_unswapped || m_guiCompositing;
+  if (m_frameForcedFull ||
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiVisualizeDirtyRegions)
+  {
+    m_frameBufferAge = 0;
+    return;
+  }
+
+  // a buffer last presented before the latest forced full redraw predates its cause
+  const int age = m_pGLContext->GetBufferAge();
+  m_frameBufferAge = static_cast<uint64_t>(age) > m_swapCount - m_fullRedrawSwap + 1 ? 0 : age;
+}
+
+int CWinSystemAmlogicGLESContext::GetBufferAge()
+{
+  return m_frameBufferAge;
+}
+
+bool CWinSystemAmlogicGLESContext::CanRedrawPartially() const
+{
+  return m_canRedrawPartially;
+}
+
+void CWinSystemAmlogicGLESContext::SetDirtyRegions(const CDirtyRegionList& dirtyRegions)
+{
+  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
+      DIRTYREGION_SOLVER_UNION)
+    m_pGLContext->SetDamagedRegions(dirtyRegions);
+}
+
 bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
 {
+  // the composite output changes everywhere, and no dirty region says so
+  m_fullRedrawRequest++;
   m_guiCompositing = (colorTransfer != 0);
 
   if (m_guiCompositing)
@@ -557,6 +631,7 @@ void CWinSystemAmlogicGLESContext::LoadLut3D()
     key = {};
   }
   m_lut3DKey = key;
+  m_fullRedrawRequest++;
 
   // a skipped frame shows the composite of the last drawn one
   if (!m_guiWillRender)
@@ -665,6 +740,8 @@ void CWinSystemAmlogicGLESContext::ResetHdrGuiSession()
 
 bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
 {
+  DecideBufferAge(guiWillRender);
+
   if (!m_guiCompositing)
     return false;
 
@@ -704,6 +781,7 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
     m_guiFboWidth = width;
     m_guiFboHeight = height;
     m_guiFboClean = false; // fresh FBO is undefined, force a clear
+    m_fullRedrawRequest++;
     CLog::Log(LOGDEBUG, "CWinSystemAmlogicGLESContext: created GUI FBO {}x{}", width, height);
   }
 
@@ -743,10 +821,17 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
         m_compositeShader->SetSdrPeak(m_guiCompositePeak);
       }
       m_guiCompositePeak = peak;
+      // a 3D LUT for the old peak draws until the new one is loaded
+      if (&GetCompositeShader() == m_compositeShader.get())
+        m_fullRedrawRequest++;
       if (rebuilt)
         RequestLut3D();
     }
   }
+
+  // the FBO or the LUTs changed after this frame's age was decided
+  if (m_fullRedrawRequest != m_frameFullRedraw)
+    DecideBufferAge(guiWillRender);
 
   if (!m_guiFbo.BeginRender())
     return false;
