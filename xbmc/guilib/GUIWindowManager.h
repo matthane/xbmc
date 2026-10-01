@@ -102,8 +102,17 @@ public:
    */
   void MarkDirty(const CRect& rect);
 
-  /*! \brief True if Process() collected any dirty regions this frame or
-   *   MarkDirty() was called since.
+  /*! \brief Mark a region for the next Render() without dirtying any window, for
+   *   content drawn outside the controls, such as subtitles
+   */
+  void MarkRegionDirty(const CRect& rect);
+
+  /*! \brief Mark the whole screen for the next Render() without dirtying any window
+   */
+  void MarkRegionDirty();
+
+  /*! \brief True if Process() collected any dirty regions this frame or a
+   *   region was marked since the last Render().
    *   Callable after Process() to decide whether the render pass needs
    *   to run; used by the dirty-driven skip in CApplication::FrameMove
    *   (currently gated to D2P plane and HDR GUI compositing FBO contexts).

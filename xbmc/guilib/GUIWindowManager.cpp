@@ -1290,7 +1290,6 @@ void CGUIWindowManager::Process(unsigned int currentTime)
   std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());
 
   m_dirtyregions.clear();
-  m_markedDirty = false;
 
   CGUIWindow* pWindow = GetWindow(GetActiveWindow());
   if (pWindow)
@@ -1333,8 +1332,7 @@ void CGUIWindowManager::MarkDirty()
 
 void CGUIWindowManager::MarkDirty(const CRect& rect)
 {
-  m_tracker.MarkDirtyRegion(CDirtyRegion(rect));
-  m_markedDirty = true;
+  MarkRegionDirty(rect);
 
   CGUIWindow* pWindow = GetWindow(GetActiveWindow());
   if (pWindow)
@@ -1345,6 +1343,18 @@ void CGUIWindowManager::MarkDirty(const CRect& rect)
   for (const auto& window : activeDialogs)
     if (window->IsDialogRunning())
       window->MarkDirtyRegion();
+}
+
+void CGUIWindowManager::MarkRegionDirty(const CRect& rect)
+{
+  m_tracker.MarkDirtyRegion(CDirtyRegion(rect));
+  m_markedDirty = true;
+}
+
+void CGUIWindowManager::MarkRegionDirty()
+{
+  const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  MarkRegionDirty(CRect(0, 0, context.GetWidth(), context.GetHeight()));
 }
 
 void CGUIWindowManager::RenderPass() const
@@ -1431,6 +1441,10 @@ bool CGUIWindowManager::Render()
 {
   assert(CServiceBroker::GetAppMessenger()->IsProcessThread());
   CSingleExit lock(CServiceBroker::GetWinSystem()->GetGfxContext());
+
+  // this pass draws every region marked so far; a mark made while it renders, such
+  // as the debug overlay's, must keep the next frame from being skipped
+  m_markedDirty = false;
 
   int bufferAge = CServiceBroker::GetWinSystem()->GetBufferAge();
   bool visualizeDirtyRegions =
