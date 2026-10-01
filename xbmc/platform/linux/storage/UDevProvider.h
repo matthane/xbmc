@@ -36,7 +36,16 @@ public:
 
 private:
   void GetDisks(std::vector<CMediaSource>& devices, bool removable);
+  bool DisksChanged();
+  void UpdateDisks(bool removable);
 
   struct udev         *m_udev;
   struct udev_monitor *m_udevMon;
+
+  std::vector<CMediaSource> m_localDisks;
+  std::vector<CMediaSource> m_removableDisks;
+  unsigned int m_disksGeneration{1};
+  unsigned int m_localGeneration{0};
+  unsigned int m_removableGeneration{0};
+  int m_mountsFd{-1};
 };
