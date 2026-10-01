@@ -57,8 +57,10 @@ float SRGBToLinear(float v)
 
 CGuiCompositeShaderGLES::CGuiCompositeShaderGLES(const std::string& prefix)
 {
-  VertexShader()->LoadSource("gles_gui_composite.vert", prefix);
-  PixelShader()->LoadSource("gles_gui_composite.frag", prefix);
+  const std::string defines =
+      prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) + ".0\n";
+  VertexShader()->LoadSource("gles_gui_composite.vert", defines);
+  PixelShader()->LoadSource("gles_gui_composite.frag", defines);
 }
 
 CGuiCompositeShaderGLES::~CGuiCompositeShaderGLES()

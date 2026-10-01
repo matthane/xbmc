@@ -26,6 +26,10 @@ uniform HLG_PRECISION float u_ootfGamma; // HLG: OOTF gamma (1.2 for BT.2100 100
                                          // PQ: 0.0 (use LUT path instead)
 uniform HLG_PRECISION float u_hlgWhite;  // HLG: GUI white / 1000-nit nominal peak
 
+// texel-centre addressing: input x samples texel x * (KODI_LUT_SIZE - 1) exactly
+const float LUT_SCALE = (KODI_LUT_SIZE - 1.0) / KODI_LUT_SIZE;
+const float LUT_OFFSET = 0.5 / KODI_LUT_SIZE;
+
 // BT.709 -> BT.2020 color space conversion matrix (applied in linear light)
 const mat3 bt709_to_bt2020 = mat3(
   0.6274,  0.0691,  0.0164,
@@ -44,10 +48,11 @@ void main()
     discard;
 
   // sRGB -> linear via LUT (IEC 61966-2-1 EOTF, replaces inline pow)
+  vec3 d = gui.rgb * LUT_SCALE + LUT_OFFSET;
   vec3 linear = vec3(
-    texture2D(u_lutDegamma, vec2(gui.r, 0.5)).r,
-    texture2D(u_lutDegamma, vec2(gui.g, 0.5)).r,
-    texture2D(u_lutDegamma, vec2(gui.b, 0.5)).r
+    texture2D(u_lutDegamma, vec2(d.r, 0.5)).r,
+    texture2D(u_lutDegamma, vec2(d.g, 0.5)).r,
+    texture2D(u_lutDegamma, vec2(d.b, 0.5)).r
   );
 
   vec3 result;
@@ -82,10 +87,11 @@ void main()
     linear = bt709_to_bt2020 * linear;
 
     // PQ path: LUT lookup (sdrPeak baked into LUT range)
+    vec3 s = linear * LUT_SCALE + LUT_OFFSET;
     result = vec3(
-      texture2D(u_lutTF, vec2(linear.r, 0.5)).r,
-      texture2D(u_lutTF, vec2(linear.g, 0.5)).r,
-      texture2D(u_lutTF, vec2(linear.b, 0.5)).r
+      texture2D(u_lutTF, vec2(s.r, 0.5)).r,
+      texture2D(u_lutTF, vec2(s.g, 0.5)).r,
+      texture2D(u_lutTF, vec2(s.b, 0.5)).r
     );
   }
 
