@@ -9,13 +9,22 @@
 #version 100
 
 precision mediump float;
+
+// in mediump the HLG OOTF luminance scale and the OETF wobble by a code, which steps
+// the output against the input in smooth gradients
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+#define HLG_PRECISION highp
+#else
+#define HLG_PRECISION mediump
+#endif
+
 varying vec2 v_tex;
 uniform sampler2D u_samp;       // GUI FBO texture (sRGB, rendered by GUI shaders)
 uniform sampler2D u_lutDegamma; // sRGB -> linear LUT (IEC 61966-2-1)
 uniform sampler2D u_lutTF;      // linear -> PQ LUT (LUT_SIZE entries, sdrPeak baked in)
-uniform float u_ootfGamma;      // HLG: OOTF gamma (1.2 for BT.2100 1000-nit ref)
-                                // PQ: 0.0 (use LUT path instead)
-uniform float u_hlgWhite;       // HLG: GUI white / 1000-nit nominal peak
+uniform HLG_PRECISION float u_ootfGamma; // HLG: OOTF gamma (1.2 for BT.2100 1000-nit ref)
+                                         // PQ: 0.0 (use LUT path instead)
+uniform HLG_PRECISION float u_hlgWhite;  // HLG: GUI white / 1000-nit nominal peak
 
 // BT.709 -> BT.2020 color space conversion matrix (applied in linear light)
 const mat3 bt709_to_bt2020 = mat3(
@@ -41,9 +50,6 @@ void main()
     texture2D(u_lutDegamma, vec2(gui.b, 0.5)).r
   );
 
-  // BT.709 -> BT.2020 gamut mapping
-  linear = bt709_to_bt2020 * linear;
-
   vec3 result;
 
   if (u_ootfGamma > 0.0)
@@ -59,8 +65,10 @@ void main()
     const float HLG_B = 0.28466892;
     const float HLG_C = 0.55991073;
 
-    vec3 scene = linear * u_hlgWhite;
-    float Y = dot(scene, vec3(0.2627, 0.6780, 0.0593));
+    // BT.709 -> BT.2020 gamut mapping
+    HLG_PRECISION vec3 scene = linear;
+    scene = bt709_to_bt2020 * scene * u_hlgWhite;
+    HLG_PRECISION float Y = dot(scene, vec3(0.2627, 0.6780, 0.0593));
     scene *= 12.0 * pow(max(1e-6, Y), (1.0 - u_ootfGamma) / u_ootfGamma);
 
     // HLG OETF piecewise (threshold at scene-light 1.0)
@@ -70,6 +78,9 @@ void main()
   }
   else
   {
+    // BT.709 -> BT.2020 gamut mapping
+    linear = bt709_to_bt2020 * linear;
+
     // PQ path: LUT lookup (sdrPeak baked into LUT range)
     result = vec3(
       texture2D(u_lutTF, vec2(linear.r, 0.5)).r,
