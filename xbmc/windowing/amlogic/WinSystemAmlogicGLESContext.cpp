@@ -472,6 +472,12 @@ std::optional<CRect> CWinSystemAmlogicGLESContext::GetFullRedrawArea() const
   return CRect(0, 0, m_nWidth, m_nHeight);
 }
 
+bool CWinSystemAmlogicGLESContext::RedrawsFullScreen() const
+{
+  return !m_partialFrame || m_frameBufferAge == 0 ||
+         CoversSurface(m_frameDamage, m_nWidth, m_nHeight);
+}
+
 void CWinSystemAmlogicGLESContext::SetDirtyRegions(const CDirtyRegionList& dirtyRegions)
 {
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions !=
@@ -480,11 +486,12 @@ void CWinSystemAmlogicGLESContext::SetDirtyRegions(const CDirtyRegionList& dirty
 
   m_pGLContext->SetDamagedRegions(dirtyRegions);
 
+  for (const auto& region : dirtyRegions)
+    m_frameDamage.Union(region);
+
   if (!m_guiPassInFbo)
     return;
 
-  for (const auto& region : dirtyRegions)
-    m_frameDamage.Union(region);
   m_guiDamaged = true;
   // a clean FBO needs no clear; clearing all of it for a smaller damage would write it
   // all back on every frame

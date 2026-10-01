@@ -71,6 +71,7 @@ public:
   void EndGuiComposite() override;
   void CompositeGui() override;
   bool IsHdrComposite() const override { return m_guiCompositing; }
+  bool RedrawsFullScreen() const override;
   bool GuiWillRender() const override { return m_guiWillRender; }
 
   EGLDisplay GetEGLDisplay() const;

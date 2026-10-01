@@ -35,6 +35,7 @@
 
 #include <memory>
 #include <mutex>
+#include <utility>
 
 using namespace std::chrono_literals;
 
@@ -114,6 +115,7 @@ void CRenderManager::SetVideoSettings(const CVideoSettings& settings)
   {
     m_pRenderer->SetVideoSettings(settings);
   }
+  m_geometryChanged = true;
 }
 
 bool CRenderManager::Configure(const VideoPicture& picture, float fps, unsigned int orientation, int buffers)
@@ -228,6 +230,7 @@ bool CRenderManager::Configure()
   }
 
   m_pRenderer->SetVideoSettings(m_playerPort->GetVideoSettings());
+  m_geometryChanged = true;
   bool result = m_pRenderer->Configure(*m_pConfigPicture, m_fps, m_orientation);
   if (result)
   {
@@ -388,6 +391,16 @@ void CRenderManager::FrameMove()
 
   m_playerPort->UpdateGuiRender(IsGuiLayer() || !m_pRenderer->VideoBypassesFramebuffer() ||
                                 firstFrame);
+
+  // raw HDR subtitles move with the video rects in the coming render pass, outside any
+  // region the GUI marked
+  bool geometryChanged = false;
+  {
+    std::unique_lock lock(m_statelock);
+    geometryChanged = std::exchange(m_geometryChanged, false);
+  }
+  if (geometryChanged)
+    OVERLAY::MarkDirty();
 
   // Run libass for the current PTS and cache the output for ConvertLibass
   // to use during the render pass. PrepareOverlays MarkDirty's on libass
@@ -714,6 +727,7 @@ void CRenderManager::SetViewMode(int iViewMode)
   std::unique_lock lock(m_statelock);
   if (m_pRenderer)
     m_pRenderer->SetViewMode(iViewMode);
+  m_geometryChanged = true;
   m_playerPort->VideoParamsChange();
 }
 
@@ -983,6 +997,7 @@ void CRenderManager::UpdateResolution()
             m_pRenderer->Update();
           std::unique_lock lock(m_statelock);
           m_switching = false;
+          m_geometryChanged = true;
           if (m_presenting)
             m_pRenderer->WakeVsyncPresent();
         }

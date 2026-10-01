@@ -593,6 +593,8 @@ bool CGUIWindowSettingsScreenCalibration::UpdateFromControl(int iControl)
   }
 
   CServiceBroker::GetWinSystem()->GetGfxContext().SetResInfo(m_Res[m_iCurRes], info);
+  // the overscan and subtitle position move the video and the subtitles
+  CServiceBroker::GetGUI()->GetWindowManager().MarkDirty();
 
   return isOverscanChanged;
 }

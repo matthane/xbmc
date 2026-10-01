@@ -11,6 +11,7 @@
 #include "ServiceBroker.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/AMLCodec.h"
 #include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.h"
+#include "cores/VideoPlayer/VideoRenderers/OverlayRenderer.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFlags.h"
 #include "settings/AdvancedSettings.h"
@@ -254,7 +255,27 @@ std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect
 
 void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
 {
+  const CRect sourceRect = m_sourceRect;
+  const CRect destRect = m_destRect;
+  const CRect viewRect = m_viewRect;
+  saveRotatedCoords();
+
   ManageRenderArea();
+
+  if (m_sourceRect != sourceRect || m_destRect != destRect || m_viewRect != viewRect)
+  {
+    // raw HDR subtitles are drawn with these rects in this pass; a partial redraw would
+    // keep them at the old place outside its damage, so the change waits a frame
+    if (!static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())->RedrawsFullScreen())
+    {
+      m_sourceRect = sourceRect;
+      m_destRect = destRect;
+      m_viewRect = viewRect;
+      restoreRotatedCoords();
+    }
+    // a change no source announced; overlays in the GUI pass move one frame later too
+    OVERLAY::MarkDirty();
+  }
 
   if (m_vsyncPresent)
   {
