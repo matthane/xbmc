@@ -1667,6 +1667,26 @@ bool CGUIWindowManager::HasVisibleModalDialog() const
   return HasModalDialog(false);
 }
 
+bool CGUIWindowManager::HasAnimatingWindow() const
+{
+  std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());
+  const auto isAnimating = [](CGUIWindow& window)
+  {
+    return window.IsAnimating(ANIM_TYPE_WINDOW_OPEN) ||
+           window.IsAnimating(ANIM_TYPE_WINDOW_CLOSE) || window.IsAnimating(ANIM_TYPE_VISIBLE) ||
+           window.IsAnimating(ANIM_TYPE_HIDDEN);
+  };
+  CGUIWindow* window = GetWindow(GetActiveWindow());
+  if (window && isAnimating(*window))
+    return true;
+  for (const auto& dialog : m_activeDialogs)
+  {
+    if (isAnimating(*dialog))
+      return true;
+  }
+  return false;
+}
+
 int CGUIWindowManager::GetTopmostDialog(bool modal, bool ignoreClosing) const
 {
   std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());
