@@ -689,16 +689,18 @@ int CEGLContextUtils::GetBufferAge()
 #ifdef EGL_BUFFER_AGE_KHR
   if (m_partialUpdateSupport)
   {
-    EGLint age;
-    eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_BUFFER_AGE_KHR, &age);
+    EGLint age{0};
+    if (!eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_BUFFER_AGE_KHR, &age))
+      return 0;
     return static_cast<int>(age);
   }
 #endif
 #ifdef EGL_BUFFER_AGE_EXT
   if (m_bufferAgeSupport)
   {
-    EGLint age;
-    eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_BUFFER_AGE_EXT, &age);
+    EGLint age{0};
+    if (!eglQuerySurface(m_eglDisplay, m_eglSurface, EGL_BUFFER_AGE_EXT, &age))
+      return 0;
     return static_cast<int>(age);
   }
 #endif
