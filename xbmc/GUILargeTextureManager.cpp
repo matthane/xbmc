@@ -73,7 +73,8 @@ bool CImageLoader::DoWork()
       if (needsChecking)
         CServiceBroker::GetTextureCache()->BackgroundCacheImage(texturePath);
 
-      if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload)
+      if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload &&
+          !ShouldCancel(0, 0))
         m_texture->LoadToGPUAsync();
 
       return true;
@@ -93,7 +94,8 @@ bool CImageLoader::DoWork()
   if (!m_texture)
     return false;
 
-  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload)
+  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload &&
+      !ShouldCancel(0, 0))
     m_texture->LoadToGPUAsync();
 
   return true;
