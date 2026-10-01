@@ -666,10 +666,12 @@ void CEGLContextUtils::SetDamagedRegions(const CDirtyRegionList& dirtyRegions)
     rects.reserve(dirtyRegions.size());
     for (const auto& region : dirtyRegions)
     {
-      rects.push_back({static_cast<EGLint>(std::round(region.x1)),
-                       static_cast<EGLint>(std::round(height - region.y2)),
-                       static_cast<EGLint>(std::round(region.Width())),
-                       static_cast<EGLint>(std::round(region.Height()))});
+      // outward, so the damage covers every pixel the region touches
+      const EGLint x1 = static_cast<EGLint>(std::floor(region.x1));
+      const EGLint x2 = static_cast<EGLint>(std::ceil(region.x2));
+      const EGLint y1 = static_cast<EGLint>(std::floor(height - region.y2));
+      const EGLint y2 = static_cast<EGLint>(std::ceil(height - region.y1));
+      rects.push_back({x1, y1, x2 - x1, y2 - y1});
     }
     damageRegionsResult = m_eglSetDamageRegionKHR(
         m_eglDisplay, m_eglSurface, reinterpret_cast<EGLint*>(rects.data()), rects.size());
