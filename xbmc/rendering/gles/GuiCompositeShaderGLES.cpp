@@ -16,7 +16,9 @@ extern "C"
 }
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 
 namespace
 {
@@ -51,6 +53,39 @@ float InversePQ(float E)
 float SRGBToLinear(float v)
 {
   return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+}
+
+// IEEE 754 binary16, round to nearest even, for finite input
+uint16_t FloatToHalf(float value)
+{
+  const uint32_t bits = std::bit_cast<uint32_t>(value);
+  const uint32_t sign = (bits >> 16) & 0x8000;
+  const int exponent = static_cast<int>((bits >> 23) & 0xff) - 127 + 15;
+  uint32_t mantissa = bits & 0x7fffff;
+
+  if (exponent >= 31)
+    return static_cast<uint16_t>(sign | 0x7c00);
+
+  if (exponent <= 0)
+  {
+    if (exponent < -10)
+      return static_cast<uint16_t>(sign);
+    mantissa |= 0x800000;
+    const int shift = 14 - exponent;
+    uint32_t half = mantissa >> shift;
+    const uint32_t rest = mantissa & ((1u << shift) - 1);
+    const uint32_t tie = 1u << (shift - 1);
+    if (rest > tie || (rest == tie && (half & 1)))
+      half++;
+    return static_cast<uint16_t>(sign | half);
+  }
+
+  // a carry out of the mantissa rounds up into the exponent, as it should
+  uint32_t half = (static_cast<uint32_t>(exponent) << 10) | (mantissa >> 13);
+  const uint32_t rest = mantissa & 0x1fff;
+  if (rest > 0x1000 || (rest == 0x1000 && (half & 1)))
+    half++;
+  return static_cast<uint16_t>(sign | half);
 }
 
 } // namespace
@@ -120,10 +155,14 @@ GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data,
   // The GLES 3.0 spec tightens format validation for unsized internal formats,
   // and some drivers (e.g. V3D on RPi5) silently reject GL_LUMINANCE + GL_FLOAT
   // despite advertising OES_texture_float. GL_R16F avoids this by using a sized
-  // format with well-defined behavior. Half-float precision is sufficient for
-  // a 1024-entry LUT.
+  // format with well-defined behavior. The halves are rounded here, not by the
+  // driver, so every GPU stores the same table.
+  std::vector<uint16_t> halves(data.size());
+  std::transform(data.begin(), data.end(), halves.begin(), FloatToHalf);
+
   bool uploaded = false;
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, data.size(), 1, 0, GL_RED, GL_FLOAT, data.data());
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, data.size(), 1, 0, GL_RED, GL_HALF_FLOAT,
+               halves.data());
   if (glGetError() == GL_NO_ERROR)
   {
     uploaded = true;
