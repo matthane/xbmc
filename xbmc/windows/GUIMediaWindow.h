@@ -174,7 +174,7 @@ protected:
    */
   bool HoldWhileUpdating(const CGUIMessage& message);
 
-  /*! \brief Whether the message is the deferred first fetch of a network listing
+  /*! \brief Whether the message is the deferred first fetch of a network or plugin listing
    */
   static bool IsDeferredInit(const CGUIMessage& message);
 

@@ -585,15 +585,6 @@ bool CGUIMediaWindow::OnMessage(CGUIMessage& message)
         if (message.GetParam1() != message.GetParam2() || replacing)
           m_startDirectory = returning ? dir : GetRootPath();
       }
-      if (message.GetParam2() == PLUGIN_REFRESH_DELAY)
-      {
-        Refresh();
-        SetInitialVisibility();
-        RestoreControlStates();
-        SetInitialVisibility();
-        return true;
-      }
-
       // Prevent the default CGUIWindow::OnMessage handler from running
       // (which would call OnInitWindow -> Update -> GetDirectory) when the
       // application is already shutting down.
@@ -1778,7 +1769,7 @@ void CGUIMediaWindow::OnInitWindow()
 
   CGUIWindow::OnInitWindow();
 
-  if (!deferNetwork)
+  if (!isPlugin && !deferNetwork)
     OnInitialDirectoryLoaded();
 }
 
@@ -1818,7 +1809,8 @@ bool CGUIMediaWindow::HoldWhileUpdating(const CGUIMessage& message)
 bool CGUIMediaWindow::IsDeferredInit(const CGUIMessage& message)
 {
   return message.GetMessage() == GUI_MSG_WINDOW_INIT &&
-         message.GetParam2() == NETWORK_REFRESH_DELAY;
+         (message.GetParam2() == NETWORK_REFRESH_DELAY ||
+          message.GetParam2() == PLUGIN_REFRESH_DELAY);
 }
 
 void CGUIMediaWindow::SaveControlStates()
