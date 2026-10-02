@@ -17,6 +17,7 @@
 #include "utils/StreamDetails.h"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 
 namespace KODI
@@ -38,6 +39,7 @@ public:
 
   // Implementation of CWinSystemBase via CWinSystemAmlogic
   CRenderSystemBase *GetRenderSystem() override { return this; }
+  bool InitRenderSystem() override;
   bool InitWindowSystem() override;
   bool DestroyWindowSystem() override;
   bool CreateNewWindow(const std::string& name,
@@ -95,8 +97,34 @@ private:
   // rebuild the PQ LUT without waiting for the next stream start.
   int m_guiCompositeTransfer{0};
   float m_guiCompositePeak{-1.0f};
+  // range the shader was compiled for
+  bool m_guiCompositeLimited{false};
 
+  // draws until a 3D LUT for the transfer and range is loaded
   std::unique_ptr<CGuiCompositeShaderGLES> m_compositeShader;
+
+  // the 3D LUT composite; a job builds its nodes, and the GUI thread loads them
+  struct Lut3DKey
+  {
+    int colorTransfer{0};
+    float peak{0.0f};
+    bool limited{false};
+    bool operator==(const Lut3DKey&) const = default;
+  };
+  struct CLut3DBuild;
+  std::unique_ptr<CGuiCompositeShaderGLES> m_lut3DShader;
+  Lut3DKey m_lut3DKey;
+  bool m_lut3D{false};
+  bool m_lut3DPending{false};
+  std::shared_ptr<CLut3DBuild> m_lut3DBuild;
+
+  void PrecompileGuiComposite();
+  bool CompileGuiComposite(bool limited);
+  bool BuildGuiComposite(int colorTransfer, float peak, bool limited);
+  CGuiCompositeShaderGLES& GetCompositeShader() const;
+  void RequestLut3D();
+  void LoadLut3D();
+  void CancelLut3D();
 
   void ResetHdrGuiSession();
   bool SetDvGraphicFormat(unsigned int format);
