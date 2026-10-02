@@ -57,6 +57,7 @@ public:
   void SetDirtyRegions(const CDirtyRegionList& dirtyRegions) override;
   int GetBufferAge() override;
   bool CanRedrawPartially() const override;
+  std::optional<CRect> GetFullRedrawArea() const override;
 
   bool BindTextureUploadContext() override;
   bool UnbindTextureUploadContext() override;
@@ -113,6 +114,8 @@ private:
   bool m_guiFboClean{false};
   // window-space bounds of what the GUI pass drew into the FBO this frame
   CRect m_guiCompositeBounds;
+  // the same before the damage clips them, kept over frames that draw nothing
+  CRect m_guiDrawnBounds;
   // partial redraw: the GUI pass renders into the FBO, and the frame's damage reached it
   bool m_guiPassInFbo{false};
   bool m_guiDamaged{false};

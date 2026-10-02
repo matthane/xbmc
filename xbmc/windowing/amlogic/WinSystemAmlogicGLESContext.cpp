@@ -463,6 +463,15 @@ bool CWinSystemAmlogicGLESContext::CanRedrawPartially() const
   return m_canRedrawPartially;
 }
 
+std::optional<CRect> CWinSystemAmlogicGLESContext::GetFullRedrawArea() const
+{
+  // Mali reloads every damaged tile of a partial redraw; a full one shades the whole
+  // surface, or in the HDR composite only the bounds the GUI draws
+  if (m_guiCompositing)
+    return m_guiDrawnBounds;
+  return CRect(0, 0, m_nWidth, m_nHeight);
+}
+
 void CWinSystemAmlogicGLESContext::SetDirtyRegions(const CDirtyRegionList& dirtyRegions)
 {
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions !=
@@ -902,6 +911,7 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
 
   // taken before the raw HDR PGS pass, which draws on the surface, not into the FBO
   m_guiCompositeBounds = GetGUIDrawBounds();
+  m_guiDrawnBounds = m_guiCompositeBounds;
 
   // every GUI pass clears the depth it tests against, so the FBO need not keep it; kept,
   // a partial pass has to load it back
