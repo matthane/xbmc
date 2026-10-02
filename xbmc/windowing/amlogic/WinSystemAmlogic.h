@@ -51,6 +51,10 @@ public:
   virtual void Register(IDispResource *resource);
   virtual void Unregister(IDispResource *resource);
 
+  // whether the frame being rendered redraws the whole screen, so the video rects can
+  // change in it without leaving subtitles behind in an older part of the buffer
+  virtual bool RedrawsFullScreen() const { return true; }
+
   static void SettingOptionsComponentsFiller(const std::shared_ptr<const CSetting>& setting,
                                              std::vector<IntegerSettingOption>& list,
                                              int& current);

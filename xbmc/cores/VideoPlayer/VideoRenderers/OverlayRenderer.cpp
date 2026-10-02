@@ -27,6 +27,7 @@
 #include "windowing/WinSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <utility>
 
@@ -46,11 +47,91 @@ COverlay::COverlay()
 
 COverlay::~COverlay() = default;
 
+void COverlay::PlaceImage(const CDVDOverlayImage& o, const CRect& rSource)
+{
+  if (o.source_width > 0 && o.source_height > 0)
+  {
+    m_pos = POSITION_RELATIVE;
+    m_x = (0.5f * o.width + o.x) / o.source_width;
+    m_y = (0.5f * o.height + o.y) / o.source_height;
+
+    const float subRatio{static_cast<float>(o.source_width) / o.source_height};
+    const float vidRatio{rSource.Width() / rSource.Height()};
+
+    // We always consider aligning 4/3 subtitles to the video,
+    // for example SD DVB subtitles (4/3) must be stretched on fullhd video
+
+    if (std::fabs(subRatio - vidRatio) < 0.001f || IsSquareResolution(subRatio))
+    {
+      m_align = ALIGN_VIDEO;
+      m_width = static_cast<float>(o.width) / o.source_width;
+      m_height = static_cast<float>(o.height) / o.source_height;
+    }
+    else
+    {
+      // We should have a re-encoded/cropped (removed black bars) video source.
+      // Then we cannot align to video otherwise the subtitles will be deformed
+      // better align to screen by keeping the aspect-ratio.
+      m_align = ALIGN_SCREEN_AR;
+      m_width = static_cast<float>(o.width);
+      m_height = static_cast<float>(o.height);
+      m_source_width = static_cast<float>(o.source_width);
+      m_source_height = static_cast<float>(o.source_height);
+    }
+  }
+  else
+    PlaceAbsolute(o.x, o.y, o.width, o.height);
+}
+
+void COverlay::PlaceAbsolute(float x, float y, float width, float height)
+{
+  m_align = ALIGN_VIDEO;
+  m_pos = POSITION_ABSOLUTE;
+  m_x = x;
+  m_y = y;
+  m_width = width;
+  m_height = height;
+}
+
+CRect COverlay::GetDrawRect(const SRenderState& state) const
+{
+  // a relative overlay is centred on its position
+  if (m_pos == POSITION_RELATIVE)
+    return CRect(state.x - state.width * 0.5f, state.y - state.height * 0.5f,
+                 state.x + state.width * 0.5f, state.y + state.height * 0.5f);
+  return CRect(state.x, state.y, state.x + state.width, state.y + state.height);
+}
+
+void COverlay::PlaceGlyphs()
+{
+  m_width = 1.0f;
+  m_height = 1.0f;
+  m_align = ALIGN_SCREEN;
+  m_pos = POSITION_RELATIVE;
+  m_x = 0.0f;
+  m_y = 0.0f;
+}
+
 void OVERLAY::MarkDirty()
 {
   // dirtying the windows would make the fullscreen window redraw a second frame
   CServiceBroker::GetGUI()->GetWindowManager().MarkRegionDirty();
 }
+
+void OVERLAY::MarkDirty(const CRect& rect)
+{
+  CServiceBroker::GetGUI()->GetWindowManager().MarkRegionDirty(rect);
+}
+
+namespace
+{
+// placement only, for the bounds of an overlay that is not converted yet
+class COverlayPlacement : public COverlay
+{
+public:
+  void Render(SRenderState& state) override {}
+};
+} // namespace
 
 unsigned int CRenderer::m_textureid = 1;
 
@@ -101,6 +182,7 @@ void CRenderer::Flush()
 
   ReleaseCache();
   Reset();
+  m_flushed = true;
 }
 
 void CRenderer::Reset()
@@ -222,14 +304,20 @@ void CRenderer::RenderHDROverlays(int idx)
 
 void CRenderer::Render(COverlay* o)
 {
-  SRenderState state;
-  state.x = o->m_x;
-  state.y = o->m_y;
-  state.width = o->m_width;
-  state.height = o->m_height;
+  SRenderState state = GetRenderState(*o);
+  o->Render(state);
+}
 
-  COverlay::EPosition pos = o->m_pos;
-  COverlay::EAlign align = o->m_align;
+SRenderState CRenderer::GetRenderState(const COverlay& o) const
+{
+  SRenderState state;
+  state.x = o.m_x;
+  state.y = o.m_y;
+  state.width = o.m_width;
+  state.height = o.m_height;
+
+  COverlay::EPosition pos = o.m_pos;
+  COverlay::EAlign align = o.m_align;
 
   if (pos == COverlay::POSITION_RELATIVE)
   {
@@ -248,8 +336,8 @@ void CRenderer::Render(COverlay* o)
     else if (align == COverlay::ALIGN_SCREEN_AR)
     {
       // Align to screen by keeping aspect ratio to fit into the screen area
-      float source_width = o->m_source_width > 0 ? o->m_source_width : m_rs.Width();
-      float source_height = o->m_source_height > 0 ? o->m_source_height : m_rs.Height();
+      float source_width = o.m_source_width > 0 ? o.m_source_width : m_rs.Width();
+      float source_height = o.m_source_height > 0 ? o.m_source_height : m_rs.Height();
       float ratio = std::min<float>(m_rv.Width() / source_width, m_rv.Height() / source_height);
       scale_x = m_rv.Width();
       scale_y = m_rv.Height();
@@ -304,9 +392,9 @@ void CRenderer::Render(COverlay* o)
     }
   }
 
-  state.x += GetStereoscopicDepth(o->m_pgsSubtitle, o->m_3dSubtitleDepth);
+  state.x += GetStereoscopicDepth(o.m_pgsSubtitle, o.m_3dSubtitleDepth);
 
-  o->Render(state);
+  return state;
 }
 
 bool CRenderer::HasVisibleOverlay(int idx) const
@@ -485,6 +573,7 @@ void CRenderer::PrepareOverlays(int idx)
 
   bool doMarkDirty = false;
   bool hasImageSpu = false;
+  CRect bounds;
   for (auto& e : m_buffers[idx])
   {
     // Clear last frame's cached output; libass may have invalidated the
@@ -507,6 +596,7 @@ void CRenderer::PrepareOverlays(int idx)
       hasImageSpu = true;
       if (o.m_textureid == 0)
         doMarkDirty = true;
+      bounds.Union(GetBounds(e));
       continue;
     }
 
@@ -635,6 +725,7 @@ void CRenderer::PrepareOverlays(int idx)
       ovAss.m_pendingChange = currentChange;
       doMarkDirty = true;
     }
+    bounds.Union(GetBounds(e));
   }
 
   // PGS/DVB/SPU disappearance: arrival is caught by m_textureid==0 in
@@ -644,8 +735,68 @@ void CRenderer::PrepareOverlays(int idx)
     doMarkDirty = true;
   m_prevHadImageSpu = hasImageSpu;
 
-  if (doMarkDirty)
-    MarkDirty();
+  if (doMarkDirty || m_flushed || bounds != m_lastBounds)
+  {
+    CRect dirty = m_lastBounds;
+    dirty.Union(bounds);
+    if (!dirty.IsEmpty())
+      MarkDirty(dirty);
+  }
+  m_lastBounds = bounds;
+  m_flushed = false;
+}
+
+CRect CRenderer::GetBounds(const SElement& e) const
+{
+  const CDVDOverlay& o = *e.overlay_dvd;
+
+  if (o.IsOverlayType(DVDOVERLAY_TYPE_TEXT) || o.IsOverlayType(DVDOVERLAY_TYPE_SSA))
+  {
+    CRect images;
+    for (const ASS_Image* image = e.renderedImages; image; image = image->next)
+      images.Union(CRect(image->dst_x, image->dst_y, image->dst_x + image->w,
+                         image->dst_y + image->h));
+    if (images.IsEmpty())
+      return CRect();
+
+    // COverlayGlyphGLES covers the frame and places each image at its frame position
+    COverlayPlacement glyphs;
+    glyphs.PlaceGlyphs();
+    const SRenderState state = GetRenderState(glyphs);
+    if (e.renderedFrameWidth > 0.0f && e.renderedFrameHeight > 0.0f)
+    {
+      const float scaleX = state.width / e.renderedFrameWidth;
+      const float scaleY = state.height / e.renderedFrameHeight;
+      return CRect(state.x + images.x1 * scaleX, state.y + images.y1 * scaleY,
+                   state.x + images.x2 * scaleX, state.y + images.y2 * scaleY);
+    }
+  }
+  else if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE) || o.IsOverlayType(DVDOVERLAY_TYPE_SPU))
+  {
+    // a converted overlay keeps the placement it was drawn with
+    COverlayPlacement placement;
+    const COverlay* overlay = &placement;
+    const auto it = o.m_textureid ? m_textureCache.find(o.m_textureid) : m_textureCache.end();
+    if (it != m_textureCache.end())
+    {
+      overlay = it->second.get();
+    }
+    else if (o.IsOverlayType(DVDOVERLAY_TYPE_IMAGE))
+    {
+      placement.PlaceImage(static_cast<const CDVDOverlayImage&>(o), m_rs);
+    }
+    else
+    {
+      // the bitmap before the crop to its visible pixels, which only shrinks it
+      const CDVDOverlaySpu& spu = static_cast<const CDVDOverlaySpu&>(o);
+      placement.PlaceAbsolute(spu.x, spu.y, spu.width, spu.height);
+    }
+
+    return overlay->GetDrawRect(GetRenderState(*overlay));
+  }
+
+  const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  return CRect(0, 0, context.GetWidth(), context.GetHeight());
 }
 
 std::shared_ptr<COverlay> CRenderer::ConvertLibass(SElement& e)

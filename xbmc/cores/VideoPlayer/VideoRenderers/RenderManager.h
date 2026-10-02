@@ -276,5 +276,7 @@ protected:
   //! Set by the render loop around a display mode switch, under m_statelock; the vsync thread
   //! does not pick meanwhile
   bool m_switching{false};
+  // the video rects change at the next render pass; FrameMove marks the whole GUI
+  bool m_geometryChanged{false};
   int m_guiPresentSource{-1};
 };
