@@ -682,6 +682,29 @@ std::unique_ptr<CVideoSync> CWinSystemAmlogicGLESContext::GetVideoSync(CVideoRef
   return pVSync;
 }
 
+bool CWinSystemAmlogicGLESContext::BindTextureUploadContext()
+{
+  // without a usable shared context the texture is uploaded at its first draw, as before
+  if (!m_pGLContext->HasUploadContext() || m_uploadContextFailed)
+    return false;
+
+  if (m_pGLContext->BindTextureUploadContext())
+    return true;
+
+  m_uploadContextFailed = true;
+  return false;
+}
+
+bool CWinSystemAmlogicGLESContext::UnbindTextureUploadContext()
+{
+  return m_pGLContext->UnbindTextureUploadContext();
+}
+
+bool CWinSystemAmlogicGLESContext::HasContext()
+{
+  return m_pGLContext->HasContext();
+}
+
 bool CWinSystemAmlogicGLESContext::SupportsStereo(const RenderStereoMode mode) const
 {
   if (m_amlDisplay->aml_display_support_3d() &&

@@ -229,6 +229,7 @@ public:
   bool BindTextureUploadContext();
   bool UnbindTextureUploadContext();
   bool HasContext();
+  bool HasUploadContext() const { return m_eglUploadContext != EGL_NO_CONTEXT; }
 
 private:
   void SurfaceAttrib();
