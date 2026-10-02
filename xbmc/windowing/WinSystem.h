@@ -20,6 +20,7 @@
 #include "utils/HDRCapabilities.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -82,6 +83,9 @@ public:
   virtual int GetBufferAge() { return 2; }
   //! \brief False while the buffer ages cannot be trusted, so the GUI fills the viewport on change.
   virtual bool CanRedrawPartially() const { return true; }
+  //! \brief Area a full GUI redraw shades, where a partial redraw costs up to twice as much per
+  //! pixel; none where it costs no more.
+  virtual std::optional<CRect> GetFullRedrawArea() const { return {}; }
   //! \brief Bits per color channel of the presented output.
   virtual int GetOutputBitDepth() const { return 8; }
   virtual bool MoveWindow(int topLeft, int topRight){return false;}

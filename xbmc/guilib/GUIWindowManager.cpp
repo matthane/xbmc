@@ -1508,6 +1508,20 @@ bool CGUIWindowManager::Render()
     for (auto& region : dirtyRegions)
       region = CDirtyRegion(SnapToTiles(region, context.GetWidth(), context.GetHeight()));
 
+    // a damaged tile is reloaded before it is drawn, which costs no more than shading it,
+    // so past half of what a full redraw shades the partial one costs more
+    const std::optional<CRect> fullArea = CServiceBroker::GetWinSystem()->GetFullRedrawArea();
+    if (fullArea)
+    {
+      CRect damage;
+      for (const auto& region : dirtyRegions)
+        damage.Union(region);
+      CRect full = SnapToTiles(*fullArea, context.GetWidth(), context.GetHeight());
+      full.Union(damage);
+      if (2 * damage.Area() > full.Area())
+        dirtyRegions = {CDirtyRegion(CRect(0, 0, context.GetWidth(), context.GetHeight()))};
+    }
+
     for (const auto& i : dirtyRegions)
     {
       if (i.IsEmpty())
