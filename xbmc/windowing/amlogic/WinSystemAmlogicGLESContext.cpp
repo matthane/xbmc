@@ -903,6 +903,13 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
   // taken before the raw HDR PGS pass, which draws on the surface, not into the FBO
   m_guiCompositeBounds = GetGUIDrawBounds();
 
+  // every GUI pass clears the depth it tests against, so the FBO need not keep it; kept,
+  // a partial pass has to load it back
+  if (m_RenderVersionMajor >= 3)
+  {
+    const GLenum depth = GL_DEPTH_ATTACHMENT;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &depth);
+  }
   m_guiFbo.EndRender();
 
   // outside the damage the buffer still holds an older frame
