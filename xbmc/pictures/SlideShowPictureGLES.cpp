@@ -12,6 +12,7 @@
 #include "guilib/Texture.h"
 #include "rendering/gles/RenderSystemGLES.h"
 #include "utils/GLUtils.h"
+#include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
 std::unique_ptr<CSlideShowPic> CSlideShowPic::CreateSlideShowPicture()
@@ -94,6 +95,8 @@ void CSlideShowPicGLES::Render(float* x,
               (col[3] / 255.0f));
   glUniform1f(depthLoc, -1.0f);
   glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_BYTE, idx);
+  CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  renderSystem->AddGUIDrawBounds(CRect(0, 0, context.GetWidth(), context.GetHeight()));
 
   glDisableVertexAttribArray(posLoc);
   glDisableVertexAttribArray(tex0Loc);

@@ -25,6 +25,7 @@
 #include "utils/log.h"
 #include "windowing/WinSystem.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -466,6 +467,19 @@ void COverlayGlyphGLES::Render(SRenderState& state)
   glDrawArrays(GL_TRIANGLES, 0, m_vertexCount);
   CRenderSystemBase::m_GUIElementCount++;
 
+  if (renderSystem->IsTrackingGUIDrawBounds() && !m_vertex.empty())
+  {
+    CRect bounds(m_vertex.front().x, m_vertex.front().y, m_vertex.front().x, m_vertex.front().y);
+    for (const auto& vertex : m_vertex)
+    {
+      bounds.x1 = std::min(bounds.x1, vertex.x);
+      bounds.y1 = std::min(bounds.y1, vertex.y);
+      bounds.x2 = std::max(bounds.x2, vertex.x);
+      bounds.y2 = std::max(bounds.y2, vertex.y);
+    }
+    renderSystem->AddGUIDrawBounds(bounds.x1, bounds.y1, 0.0f, bounds.x2, bounds.y2, 0.0f, matrix);
+  }
+
   glDisableVertexAttribArray(posLoc);
   glDisableVertexAttribArray(colLoc);
   glDisableVertexAttribArray(tex0Loc);
@@ -589,6 +603,7 @@ void COverlayTextureGLES::Render(SRenderState& state)
 
   glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_BYTE, idx);
   CRenderSystemBase::m_GUIElementCount++;
+  renderSystem->AddGUIDrawBounds(rd.x1, rd.y1, 0.0f, rd.x2, rd.y2, 0.0f);
 
   glDisableVertexAttribArray(posLoc);
   glDisableVertexAttribArray(tex0Loc);

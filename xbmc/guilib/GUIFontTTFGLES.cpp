@@ -24,6 +24,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <algorithm>
 #include <cassert>
 #include <memory>
 
@@ -272,6 +273,10 @@ void CGUIFontTTFGLES::LastEnd()
         CRenderSystemBase::m_GUIElementCount++;
       }
 
+      const CRect& bounds = m_vertexTrans[i].m_vertexBuffer->bounds;
+      renderSystem->AddGUIDrawBounds(bounds.x1, bounds.y1, 0.0f, bounds.x2, bounds.y2, 0.0f,
+                                     matrix);
+
       glMatrixModview.Pop();
     }
     // Restore the original scissor rectangle
@@ -294,10 +299,20 @@ CVertexBuffer CGUIFontTTFGLES::CreateVertexBuffer(const std::vector<SVertex>& ve
 {
   assert(vertices.size() % 4 == 0);
   GLuint bufferHandle = 0;
+  CRect bounds;
 
   // Do not create empty buffers, leave buffer as 0, it will be ignored in drawing stage
   if (!vertices.empty())
   {
+    bounds = CRect(vertices.front().x, vertices.front().y, vertices.front().x, vertices.front().y);
+    for (const auto& vertex : vertices)
+    {
+      bounds.x1 = std::min(bounds.x1, vertex.x);
+      bounds.y1 = std::min(bounds.y1, vertex.y);
+      bounds.x2 = std::max(bounds.x2, vertex.x);
+      bounds.y2 = std::max(bounds.y2, vertex.y);
+    }
+
     // Generate a unique buffer object name and put it in bufferHandle
     glGenBuffers(1, &bufferHandle);
     // Bind the buffer to the OpenGL context's GL_ARRAY_BUFFER binding point
@@ -311,7 +326,7 @@ CVertexBuffer CGUIFontTTFGLES::CreateVertexBuffer(const std::vector<SVertex>& ve
     glBindBuffer(GL_ARRAY_BUFFER, 0);
   }
 
-  return CVertexBuffer(bufferHandle, vertices.size() / 4, this);
+  return CVertexBuffer(bufferHandle, vertices.size() / 4, this, bounds);
 }
 
 void CGUIFontTTFGLES::DestroyVertexBuffer(CVertexBuffer& buffer) const

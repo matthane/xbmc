@@ -768,6 +768,9 @@ void CWinSystemAmlogicGLESContext::EndGuiComposite()
   if (!m_guiWillRender)
     return;
 
+  // taken before the raw HDR PGS pass, which draws on the surface, not into the FBO
+  m_guiCompositeBounds = GetGUIDrawBounds();
+
   m_guiFbo.EndRender();
 
   // Clear the backbuffer before video renders. In the FBO compositing path,
@@ -793,7 +796,8 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
   // m_guiFboClean means "FBO is empty/clean" (no composite work needed).
   if (m_guiWillRender)
   {
-    const bool guiEmpty = (GetGUIElementCount() == 0);
+    // bounds, not the element count: add-on renders and opaque clears are not counted
+    const bool guiEmpty = m_guiCompositeBounds.IsEmpty();
     m_guiFboClean = guiEmpty;
     if (guiEmpty)
       return;
@@ -824,8 +828,13 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
   GLint posLoc = shader.GetPosLoc();
   GLint texLoc = shader.GetTexLoc();
 
-  GLfloat vert[4][2] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
-  GLfloat tex[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+  // outside the bounds the FBO is transparent, which the shader would discard
+  const CRect& b = m_guiCompositeBounds;
+  GLfloat vert[4][2] = {{b.x1, b.y1}, {b.x2, b.y1}, {b.x2, b.y2}, {b.x1, b.y2}};
+  GLfloat tex[4][2] = {{b.x1 / w, 1 - b.y1 / h},
+                       {b.x2 / w, 1 - b.y1 / h},
+                       {b.x2 / w, 1 - b.y2 / h},
+                       {b.x1 / w, 1 - b.y2 / h}};
   GLubyte idx[4] = {0, 1, 3, 2};
 
   glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, vert);

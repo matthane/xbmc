@@ -90,6 +90,8 @@ private:
   int m_guiFboHeight{0};
   // True when the GUI FBO is empty (no draws this frame); CompositeGui skips composite when true.
   bool m_guiFboClean{false};
+  // window-space bounds of what the GUI pass drew into the FBO this frame
+  CRect m_guiCompositeBounds;
   // Whether the GUI render pass will run this frame; set by BeginGuiComposite.
   bool m_guiWillRender{true};
   // Transfer function the LUTs were built for, and the GUI reference white

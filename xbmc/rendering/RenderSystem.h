@@ -88,6 +88,12 @@ public:
    */
   virtual void Project(float &x, float &y, float &z) { }
 
+  /**
+   * Union a window-space rect (pixels, Y down) into this frame's GUI draw bounds,
+   * for GUI draws that are not counted in m_GUIElementCount
+   */
+  virtual void AddGUIDrawBounds(const CRect& rect) {}
+
   virtual std::string GetShaderPath(const std::string &filename) { return ""; }
 
   void GetRenderVersion(unsigned int& major, unsigned int& minor) const;
