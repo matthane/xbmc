@@ -351,31 +351,21 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
 
   if (m_guiCompositing)
   {
-    if (!m_compositeShader)
-    {
-      std::string defines;
-      if (UseLimitedColor())
-        defines += "#define KODI_LIMITED_RANGE 1\n";
-      m_compositeShader = std::make_unique<CGuiCompositeShaderGLES>(defines);
-      if (!m_compositeShader->CompileAndLink())
-      {
-        CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
-        m_compositeShader.reset();
-        m_guiCompositing = false;
-        return false;
-      }
-    }
-
     // GUI reference white follows videoscreen.guipeakluminance instead of the
     // composite's hardcoded 203 nits, so the setting is a working brightness
     // control here too and means the same thing as on the per-primitive path.
     // At the shipped default this is ~199 nits, i.e. a <2% change from before.
     const float peak(CGuiCompositeShaderGLES::PeakFromPQCode(GetGuiSdrPeakLuminance()));
-    m_compositeShader->SetSdrPeak(peak);
 
-    if (!m_compositeShader->CreateLUTs(colorTransfer))
+    // chosen on every call: a session keeps its owner across a renderer
+    // reconfigure, so the transfer can change within one session; the 3D LUT
+    // folds the sRGB decode into its one fetch, so PQ prefers it
+    using Input = CGuiCompositeShaderGLES::Input;
+    const bool lut3D = colorTransfer == AVCOL_TRC_SMPTE2084 && m_RenderVersionMajor >= 3 &&
+                       IsExtSupported("GL_OES_texture_3D");
+    if (!(lut3D && BuildGuiComposite(Input::LUT3D, colorTransfer, peak)) &&
+        !BuildGuiComposite(Input::LUT, colorTransfer, peak))
     {
-      CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to create LUTs");
       m_compositeShader.reset();
       m_guiCompositing = false;
       return false;
@@ -392,6 +382,36 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
   }
 
   return m_guiCompositing;
+}
+
+bool CWinSystemAmlogicGLESContext::BuildGuiComposite(CGuiCompositeShaderGLES::Input input,
+                                                     int colorTransfer,
+                                                     float peak)
+{
+  const bool limited = UseLimitedColor();
+  if (!m_compositeShader || m_compositeShader->GetInput() != input ||
+      m_guiCompositeLimited != limited)
+  {
+    std::string defines;
+    if (limited)
+      defines += "#define KODI_LIMITED_RANGE 1\n";
+    auto shader = std::make_unique<CGuiCompositeShaderGLES>(defines, input);
+    if (!shader->CompileAndLink())
+    {
+      CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
+      return false;
+    }
+    m_compositeShader = std::move(shader);
+    m_guiCompositeLimited = limited;
+  }
+
+  m_compositeShader->SetSdrPeak(peak);
+  if (!m_compositeShader->CreateLUTs(colorTransfer))
+  {
+    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to create LUTs");
+    return false;
+  }
+  return true;
 }
 
 bool CWinSystemAmlogicGLESContext::SetDvGraphicFormat(unsigned int format)

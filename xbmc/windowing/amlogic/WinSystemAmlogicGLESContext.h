@@ -95,8 +95,12 @@ private:
   // rebuild the PQ LUT without waiting for the next stream start.
   int m_guiCompositeTransfer{0};
   float m_guiCompositePeak{-1.0f};
+  // range the shader was compiled for
+  bool m_guiCompositeLimited{false};
 
   std::unique_ptr<CGuiCompositeShaderGLES> m_compositeShader;
+
+  bool BuildGuiComposite(CGuiCompositeShaderGLES::Input input, int colorTransfer, float peak);
 
   void ResetHdrGuiSession();
   bool SetDvGraphicFormat(unsigned int format);

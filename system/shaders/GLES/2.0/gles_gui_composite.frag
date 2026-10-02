@@ -8,6 +8,10 @@
 
 #version 100
 
+#ifdef KODI_GUI_LUT3D
+#extension GL_OES_texture_3D : require
+#endif
+
 precision mediump float;
 
 // in mediump the HLG OOTF luminance scale and the OETF wobble by a code, which steps
@@ -21,7 +25,11 @@ precision mediump float;
 #endif
 
 varying vec2 v_tex;
+#ifdef KODI_GUI_LUT3D
+uniform mediump sampler2D u_samp; // GUI FBO texture (sRGB, rendered by GUI shaders)
+#else
 uniform sampler2D u_samp;       // GUI FBO texture (sRGB, rendered by GUI shaders)
+#endif
 uniform sampler2D u_lutDegamma; // sRGB -> linear LUT (IEC 61966-2-1)
 uniform sampler2D u_lutTF;      // sqrt(linear) -> PQ LUT (PQ_LUT_SIZE entries, sdrPeak baked in)
 uniform HLG_PRECISION float u_ootfGamma; // HLG: OOTF gamma (1.2 for BT.2100 1000-nit ref)
@@ -33,6 +41,13 @@ const float LUT_SCALE = (KODI_LUT_SIZE - 1.0) / KODI_LUT_SIZE;
 const float LUT_OFFSET = 0.5 / KODI_LUT_SIZE;
 const PQ_INDEX_PRECISION float PQ_LUT_SCALE = (KODI_PQ_LUT_SIZE - 1.0) / KODI_PQ_LUT_SIZE;
 const PQ_INDEX_PRECISION float PQ_LUT_OFFSET = 0.5 / KODI_PQ_LUT_SIZE;
+
+#ifdef KODI_GUI_LUT3D
+// sRGB -> PQ in one fetch; node i sits at sRGB value (i / (KODI_LUT3D_SIZE - 1))^2
+uniform mediump sampler3D u_lut3d;
+const float LUT3D_SCALE = (KODI_LUT3D_SIZE - 1.0) / KODI_LUT3D_SIZE;
+const float LUT3D_OFFSET = 0.5 / KODI_LUT3D_SIZE;
+#endif
 
 // BT.709 -> BT.2020 color space conversion matrix (applied in linear light)
 const mat3 bt709_to_bt2020 = mat3(
@@ -51,6 +66,9 @@ void main()
   if (gui.a == 0.0)
     discard;
 
+#ifdef KODI_GUI_LUT3D
+  vec3 result = texture3D(u_lut3d, sqrt(gui.rgb) * LUT3D_SCALE + LUT3D_OFFSET).rgb;
+#else
   // sRGB -> linear via LUT (IEC 61966-2-1 EOTF, replaces inline pow)
   vec3 d = gui.rgb * LUT_SCALE + LUT_OFFSET;
   vec3 linear = vec3(
@@ -101,6 +119,7 @@ void main()
       texture2D(u_lutTF, vec2(s.b, 0.5)).r
     );
   }
+#endif
 
   // Limited-range encoding at the BO write boundary. Canonical normalized
   // ratios (bit-depth-agnostic in float space; BO write quantizes to the

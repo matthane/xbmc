@@ -16,6 +16,7 @@ extern "C"
 }
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -48,6 +49,13 @@ float InversePQ(float E)
     return 1.0f;
   return std::pow(num / den, 1.0f / ST2084_m1);
 }
+
+// BT.709 -> BT.2020 in linear light, rows of the matrix in gles_gui_composite.frag
+constexpr std::array<std::array<double, 3>, 3> BT709_TO_BT2020 = {{
+    {0.6274, 0.3293, 0.0433},
+    {0.0691, 0.9195, 0.0114},
+    {0.0164, 0.0880, 0.8956},
+}};
 
 // IEC 61966-2-1 sRGB EOTF.
 float SRGBToLinear(float v)
@@ -90,11 +98,14 @@ uint16_t FloatToHalf(float value)
 
 } // namespace
 
-CGuiCompositeShaderGLES::CGuiCompositeShaderGLES(const std::string& prefix)
+CGuiCompositeShaderGLES::CGuiCompositeShaderGLES(const std::string& prefix, Input input)
+  : m_input(input)
 {
-  const std::string defines = prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) +
-                              ".0\n#define KODI_PQ_LUT_SIZE " + std::to_string(PQ_LUT_SIZE) +
-                              ".0\n";
+  std::string defines = prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) +
+                        ".0\n#define KODI_PQ_LUT_SIZE " + std::to_string(PQ_LUT_SIZE) + ".0\n";
+  if (m_input == Input::LUT3D)
+    defines += "#define KODI_GUI_LUT3D 1\n#define KODI_LUT3D_SIZE " +
+               std::to_string(LUT3D_SIZE) + ".0\n";
   VertexShader()->LoadSource("gles_gui_composite.vert", defines);
   PixelShader()->LoadSource("gles_gui_composite.frag", defines);
 }
@@ -105,6 +116,8 @@ CGuiCompositeShaderGLES::~CGuiCompositeShaderGLES()
     glDeleteTextures(1, &m_lutDegammaTexId);
   if (m_lutTFTexId)
     glDeleteTextures(1, &m_lutTFTexId);
+  if (m_lut3DTexId)
+    glDeleteTextures(1, &m_lut3DTexId);
 }
 
 void CGuiCompositeShaderGLES::OnCompiledAndLinked()
@@ -114,6 +127,7 @@ void CGuiCompositeShaderGLES::OnCompiledAndLinked()
   m_hSamp = glGetUniformLocation(ProgramHandle(), "u_samp");
   m_hLutDegamma = glGetUniformLocation(ProgramHandle(), "u_lutDegamma");
   m_hLutTF = glGetUniformLocation(ProgramHandle(), "u_lutTF");
+  m_hLut3D = glGetUniformLocation(ProgramHandle(), "u_lut3d");
   m_hProj = glGetUniformLocation(ProgramHandle(), "u_proj");
   m_hOotfGamma = glGetUniformLocation(ProgramHandle(), "u_ootfGamma");
   m_hHlgWhite = glGetUniformLocation(ProgramHandle(), "u_hlgWhite");
@@ -121,6 +135,7 @@ void CGuiCompositeShaderGLES::OnCompiledAndLinked()
   glUniform1i(m_hSamp, 0);
   glUniform1i(m_hLutDegamma, 1);
   glUniform1i(m_hLutTF, 2);
+  glUniform1i(m_hLut3D, 3);
   glUseProgram(0);
 }
 
@@ -136,6 +151,11 @@ bool CGuiCompositeShaderGLES::OnEnabled()
   glBindTexture(GL_TEXTURE_2D, m_lutDegammaTexId);
   glActiveTexture(GL_TEXTURE2);
   glBindTexture(GL_TEXTURE_2D, m_lutTFTexId);
+  if (m_input == Input::LUT3D)
+  {
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_3D, m_lut3DTexId);
+  }
   glActiveTexture(GL_TEXTURE0);
 
   return true;
@@ -197,6 +217,35 @@ GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data,
   return texId;
 }
 
+GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& data)
+{
+  while (glGetError() != GL_NO_ERROR)
+  {
+  }
+
+  GLuint texId;
+  glGenTextures(1, &texId);
+  glBindTexture(GL_TEXTURE_3D, texId);
+  glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB10_A2, LUT3D_SIZE, LUT3D_SIZE, LUT3D_SIZE, 0, GL_RGBA,
+               GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
+  const bool uploaded = glGetError() == GL_NO_ERROR;
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_3D, 0);
+
+  if (!uploaded)
+  {
+    CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUT3DTexture - failed to create {}^3 LUT",
+              LUT3D_SIZE);
+    glDeleteTextures(1, &texId);
+    return 0;
+  }
+  return texId;
+}
+
 std::vector<float> CGuiCompositeShaderGLES::GenerateDegammaLUT()
 {
   std::vector<float> lut(LUT_SIZE);
@@ -242,6 +291,51 @@ std::vector<float> CGuiCompositeShaderGLES::GeneratePQLUT(float sdrPeak)
   return lut;
 }
 
+std::vector<uint32_t> CGuiCompositeShaderGLES::GeneratePQLUT3D(float sdrPeak)
+{
+  // RGB10_A2 nodes: 8-bit nodes lose up to three codes at 10 bit, half floats filter
+  // at half rate. A live guipeakluminance change rebuilds this on the GUI thread, so
+  // the ~36k nodes read the PQ curve from the 1D LUT instead of calling pow.
+  const std::vector<float> table = GeneratePQLUT(sdrPeak);
+  const std::vector<double> pq(table.begin(), table.end());
+
+  std::array<double, LUT3D_SIZE> linear;
+  for (int i = 0; i < LUT3D_SIZE; i++)
+  {
+    const double x = static_cast<double>(i) / (LUT3D_SIZE - 1);
+    linear[i] = SRGBToLinear(static_cast<float>(x * x));
+  }
+
+  const auto encode = [&pq](double value)
+  {
+    const double t = std::sqrt(std::clamp(value, 0.0, 1.0)) * (PQ_LUT_SIZE - 1);
+    const int i = std::min(static_cast<int>(t), PQ_LUT_SIZE - 2);
+    const double v = pq[i] + (pq[i + 1] - pq[i]) * (t - i);
+    return static_cast<uint32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 1023.0));
+  };
+
+  std::vector<uint32_t> lut;
+  lut.reserve(LUT3D_SIZE * LUT3D_SIZE * LUT3D_SIZE);
+  for (int b = 0; b < LUT3D_SIZE; b++)
+  {
+    for (int g = 0; g < LUT3D_SIZE; g++)
+    {
+      for (int r = 0; r < LUT3D_SIZE; r++)
+      {
+        const std::array<double, 3> rgb = {linear[r], linear[g], linear[b]};
+        uint32_t texel = 3u << 30;
+        for (int c = 0; c < 3; c++)
+        {
+          const auto& row = BT709_TO_BT2020[c];
+          texel |= encode(row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]) << (10 * c);
+        }
+        lut.push_back(texel);
+      }
+    }
+  }
+  return lut;
+}
+
 bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
 {
   // Build into locals and only commit on success. Deleting the live textures up
@@ -249,18 +343,32 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
   // failure - the GUI composites to solid black, and a caller that retries (a
   // live SetSdrPeak change) would thrash glDeleteTextures/glTexImage2D every
   // frame. Failure must be a no-op so the previous LUTs keep working.
-  GLuint degamma = CreateLUTTexture(GenerateDegammaLUT(), GL_LINEAR);
-  if (!degamma)
+  GLuint degamma = 0;
+  if (m_input == Input::LUT)
   {
-    CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - failed to create degamma LUT");
-    return false;
+    degamma = CreateLUTTexture(GenerateDegammaLUT(), GL_LINEAR);
+    if (!degamma)
+    {
+      CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - failed to create degamma LUT");
+      return false;
+    }
   }
 
   GLuint tf = 0;
   float ootfGamma = 0.0f;
   float hlgWhite = 0.0f;
 
-  if (colorTransfer == AVCOL_TRC_SMPTE2084)
+  GLuint tf3D = 0;
+
+  if (colorTransfer == AVCOL_TRC_SMPTE2084 && m_input == Input::LUT3D)
+  {
+    tf3D = CreateLUT3DTexture(GeneratePQLUT3D(m_sdrPeak));
+    if (!tf3D)
+      return false;
+    CLog::Log(LOGDEBUG, "CGuiCompositeShaderGLES::CreateLUTs - created PQ 3D LUT ({}^3, {:.0f} nits)",
+              LUT3D_SIZE, m_sdrPeak * 10000.0f);
+  }
+  else if (colorTransfer == AVCOL_TRC_SMPTE2084)
   {
     tf = CreateLUTTexture(GeneratePQLUT(m_sdrPeak), GL_NEAREST);
     if (!tf)
@@ -272,6 +380,11 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
     CLog::Log(LOGDEBUG,
               "CGuiCompositeShaderGLES::CreateLUTs - created PQ LUT ({} entries, {:.0f} nits)",
               PQ_LUT_SIZE, m_sdrPeak * 10000.0f);
+  }
+  else if (m_input == Input::LUT3D)
+  {
+    CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - the 3D LUT is PQ only");
+    return false;
   }
   else if (colorTransfer == AVCOL_TRC_ARIB_STD_B67)
   {
@@ -294,9 +407,12 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
     glDeleteTextures(1, &m_lutDegammaTexId);
   if (m_lutTFTexId)
     glDeleteTextures(1, &m_lutTFTexId);
+  if (m_lut3DTexId)
+    glDeleteTextures(1, &m_lut3DTexId);
 
   m_lutDegammaTexId = degamma;
   m_lutTFTexId = tf;
+  m_lut3DTexId = tf3D;
   m_ootfGamma = ootfGamma;
   m_hlgWhite = hlgWhite;
   return true;
