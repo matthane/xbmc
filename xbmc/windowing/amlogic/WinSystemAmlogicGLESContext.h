@@ -54,6 +54,10 @@ public:
 
   bool SupportsStereo(const RenderStereoMode mode) const override;
   void PresentRender(bool rendered, bool videoLayer) override;
+  void SetDirtyRegions(const CDirtyRegionList& dirtyRegions) override;
+  int GetBufferAge() override;
+  bool CanRedrawPartially() const override;
+  std::optional<CRect> GetFullRedrawArea() const override;
 
   bool BindTextureUploadContext() override;
   bool UnbindTextureUploadContext() override;
@@ -84,6 +88,24 @@ private:
   // set by the first job thread that could not bind the upload context
   std::atomic<bool> m_uploadContextFailed{false};
 
+  // partial redraw: the buffer age is decided once per frame and only reported by
+  // GetBufferAge, which runs once per Render call
+  void DecideBufferAge(bool guiWillRender);
+  bool m_eglBufferAge{false};
+  bool m_canRedrawPartially{false};
+  bool m_partialFrame{false};
+  int m_frameBufferAge{2};
+  CRect m_frameDamage;
+  bool m_frameForcedFull{false};
+  // changes no dirty region covers (compositing, LUTs, FBO) request a full redraw; done
+  // is the request the latest presented forced full redraw covered
+  unsigned int m_fullRedrawRequest{0};
+  unsigned int m_fullRedrawDone{0};
+  unsigned int m_frameFullRedraw{0};
+  bool m_unswapped{false};
+  uint64_t m_swapCount{0};
+  uint64_t m_fullRedrawSwap{0};
+
   bool m_guiCompositing{false};
   CFrameBufferObject m_guiFbo;
   int m_guiFboWidth{0};
@@ -92,6 +114,11 @@ private:
   bool m_guiFboClean{false};
   // window-space bounds of what the GUI pass drew into the FBO this frame
   CRect m_guiCompositeBounds;
+  // the same before the damage clips them, kept over frames that draw nothing
+  CRect m_guiDrawnBounds;
+  // partial redraw: the GUI pass renders into the FBO, and the frame's damage reached it
+  bool m_guiPassInFbo{false};
+  bool m_guiDamaged{false};
   // Whether the GUI render pass will run this frame; set by BeginGuiComposite.
   bool m_guiWillRender{true};
   // Transfer function the LUTs were built for, and the GUI reference white

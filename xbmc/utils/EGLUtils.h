@@ -206,6 +206,7 @@ public:
   bool TrySwapBuffers();
   void SetDamagedRegions(const CDirtyRegionList& dirtyRegions);
   int GetBufferAge();
+  bool HasBufferAge() const { return m_partialUpdateSupport || m_bufferAgeSupport; }
   bool IsPlatformSupported() const;
   EGLint GetConfigAttrib(EGLint attribute) const;
 
