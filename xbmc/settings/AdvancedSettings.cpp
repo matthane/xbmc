@@ -505,7 +505,7 @@ void CAdvancedSettings::Initialize()
 
   m_canWindowed = true;
   m_guiVisualizeDirtyRegions = false;
-  m_guiAlgorithmDirtyRegions = 3;
+  m_guiAlgorithmDirtyRegions = 1;
   m_guiSmartRedraw = false;
   m_airTunesPort = 36666;
   m_airPlayPort = 36667;
