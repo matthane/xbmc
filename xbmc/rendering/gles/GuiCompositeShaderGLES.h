@@ -42,8 +42,11 @@ protected:
 private:
   // One entry per RGBA8 input value; increase to match GUI bit depth.
   static constexpr int LUT_SIZE = 256;
+  // Entries of the PQ LUT, which is read unfiltered: enough that the nearest one stays
+  // within a code of the transfer at 10 bit.
+  static constexpr int PQ_LUT_SIZE = 4096;
 
-  GLuint CreateLUTTexture(const std::vector<float>& data);
+  GLuint CreateLUTTexture(const std::vector<float>& data, GLint filter);
   static std::vector<float> GenerateDegammaLUT();
   static std::vector<float> GeneratePQLUT(float sdrPeak);
 
