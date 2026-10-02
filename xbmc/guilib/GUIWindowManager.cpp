@@ -67,6 +67,7 @@
 #include "windows/GUIWindowStartup.h"
 #include "windows/GUIWindowSystemInfo.h"
 
+#include <cmath>
 #include <mutex>
 
 // Dialog includes
@@ -189,6 +190,20 @@ bool PreValidateMessage(CGUIMessage& message, CGUIWindow& window)
     }
   }
   return true;
+}
+
+// edge of the blocks a tile-based GPU renders a damaged surface in: damage that ends inside
+// a block still costs the whole block, and the Mali G52 clears the rest of the block
+constexpr float TILE_SIZE = 32.0f;
+
+CRect SnapToTiles(const CRect& rect, float width, float height)
+{
+  // blocks count from the top-left corner of the surface as it is scanned out
+  CRect snapped(std::floor(rect.x1 / TILE_SIZE) * TILE_SIZE,
+                std::floor(rect.y1 / TILE_SIZE) * TILE_SIZE,
+                std::ceil(rect.x2 / TILE_SIZE) * TILE_SIZE,
+                std::ceil(rect.y2 / TILE_SIZE) * TILE_SIZE);
+  return snapped.Intersect(CRect(0, 0, width, height));
 }
 } // namespace
 
@@ -1451,24 +1466,35 @@ bool CGUIWindowManager::Render()
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiVisualizeDirtyRegions;
   if (visualizeDirtyRegions)
     bufferAge = 20;
+  // a mark holds both the old and the new rect, so a known age needs no extra render
+  const bool knownAge = CServiceBroker::GetWinSystem()->CanRedrawPartially();
   if (bufferAge)
-    m_tracker.CleanMarkedRegions(bufferAge + 1);
+    m_tracker.CleanMarkedRegions(knownAge ? bufferAge : bufferAge + 1);
   else
     m_tracker.CleanMarkedRegions(10);
 
   CDirtyRegionList dirtyRegions = m_tracker.GetDirtyRegions();
 
   bool hasRendered = false;
+  int algorithm =
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions;
+  if ((algorithm == DIRTYREGION_SOLVER_UNION || algorithm == DIRTYREGION_SOLVER_COST_REDUCTION) &&
+      !CServiceBroker::GetWinSystem()->CanRedrawPartially())
+    algorithm = DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE;
+  // in partial redraw a frame with no region presents nothing, so the shown buffer stays
+  // current whatever the age of the back buffer
+  const bool nothingToDraw =
+      dirtyRegions.empty() &&
+      (algorithm == DIRTYREGION_SOLVER_UNION || algorithm == DIRTYREGION_SOLVER_COST_REDUCTION);
   // If we visualize the regions we will always render the entire viewport
   // If the buffer age is zero, the current content is undefined and has to be rendered
-  if (visualizeDirtyRegions || bufferAge == 0 ||
-      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions ==
-          DIRTYREGION_SOLVER_FILL_VIEWPORT_ALWAYS)
+  if (visualizeDirtyRegions || (bufferAge == 0 && !nothingToDraw) ||
+      algorithm == DIRTYREGION_SOLVER_FILL_VIEWPORT_ALWAYS)
   {
     RenderPass();
     hasRendered = true;
   }
-  else if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
+  else if (algorithm == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
   {
     if (!dirtyRegions.empty())
     {
@@ -1478,6 +1504,24 @@ bool CGUIWindowManager::Render()
   }
   else
   {
+    const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+    for (auto& region : dirtyRegions)
+      region = CDirtyRegion(SnapToTiles(region, context.GetWidth(), context.GetHeight()));
+
+    // a damaged tile is reloaded before it is drawn, which costs no more than shading it,
+    // so past half of what a full redraw shades the partial one costs more
+    const std::optional<CRect> fullArea = CServiceBroker::GetWinSystem()->GetFullRedrawArea();
+    if (fullArea)
+    {
+      CRect damage;
+      for (const auto& region : dirtyRegions)
+        damage.Union(region);
+      CRect full = SnapToTiles(*fullArea, context.GetWidth(), context.GetHeight());
+      full.Union(damage);
+      if (2 * damage.Area() > full.Area())
+        dirtyRegions = {CDirtyRegion(CRect(0, 0, context.GetWidth(), context.GetHeight()))};
+    }
+
     for (const auto& i : dirtyRegions)
     {
       if (i.IsEmpty())
