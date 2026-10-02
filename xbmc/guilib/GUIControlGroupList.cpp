@@ -101,6 +101,7 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
   // we run through the controls, rendering as we go
   int index = 0;
   float pos = GetAlignOffset();
+  CRect rect;
   for (iControls it = m_children.begin(); it != m_children.end(); ++it)
   {
     // note we render all controls, even if they're offscreen, as then they'll be updated
@@ -110,7 +111,10 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
       CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX, m_posY + pos - m_scroller.GetValue());
     else
       CServiceBroker::GetWinSystem()->GetGfxContext().SetOrigin(m_posX + pos - m_scroller.GetValue(), m_posY);
+    const size_t oldDirty = dirtyregions.size();
     control->DoProcess(currentTime, dirtyregions);
+    if (control->IsVisible() || oldDirty != dirtyregions.size())
+      rect.Union(control->GetRenderRegion());
 
     if (control->IsVisible())
     {
@@ -126,6 +130,13 @@ void CGUIControlGroupList::Process(unsigned int currentTime, CDirtyRegionList &d
     CServiceBroker::GetWinSystem()->GetGfxContext().RestoreOrigin();
   }
   CGUIControl::Process(currentTime, dirtyregions);
+
+  // the children are drawn where the alignment and the scroll offset put them, not in the
+  // span of the list's size; only a non-empty box clips them
+  if (m_width > 0 && m_height > 0)
+    rect.Intersect(CServiceBroker::GetWinSystem()->GetGfxContext().GenerateAABB(
+        CRect(m_posX, m_posY, m_posX + m_width, m_posY + m_height)));
+  m_renderRegion = rect;
 }
 
 void CGUIControlGroupList::Render()
