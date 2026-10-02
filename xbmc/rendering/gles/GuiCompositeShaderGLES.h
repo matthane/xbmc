@@ -22,7 +22,7 @@ public:
   {
     // degamma and transfer through 1D LUTs
     LUT,
-    // PQ only: one 3D LUT maps the sRGB value to the output (GLES 3 and
+    // one 3D LUT maps the sRGB value to the output (GLES 3 and
     // GL_OES_texture_3D)
     LUT3D,
   };
@@ -37,6 +37,10 @@ public:
   // GUI reference white, in PQ-normalized units (nits / 10000). Takes effect on
   // the next CreateLUTs, which bakes it into the PQ LUT or the HLG white scale.
   void SetSdrPeak(float peak) { m_sdrPeak = peak; }
+
+  // Limited-range output. Takes effect on the next CreateLUTs, which bakes it into
+  // the 3D LUT; the other inputs apply it in the shader.
+  void SetLimitedRange(bool limited) { m_limited = limited; }
 
   // Convert a legacy PQ-signal-domain GUI peak (as CWinSystemAmlogic::
   // GetGuiSdrPeakLuminance returns) into the PQ-normalized luminance SetSdrPeak
@@ -58,23 +62,28 @@ private:
   // Entries of the PQ LUT, which is read unfiltered: enough that the nearest one stays
   // within a code of the transfer at 10 bit.
   static constexpr int PQ_LUT_SIZE = 4096;
-  // Nodes per axis of the PQ 3D LUT; with sqrt-spaced nodes 33 keeps every output
-  // within a code of the exact transfer at 10 bit.
-  static constexpr int LUT3D_SIZE = 33;
+  // Nodes per axis of the 3D LUTs, sqrt-spaced. 33 keep every PQ output within a code
+  // of the exact transfer at 10 bit. The HLG OOTF bends the output across the channels
+  // and needs 49 to stay within a code at 8 bit, the depth of the GUI plane.
+  static constexpr int PQ_LUT3D_SIZE = 33;
+  static constexpr int HLG_LUT3D_SIZE = 49;
 
   GLuint CreateLUTTexture(const std::vector<float>& data, GLint filter);
-  GLuint CreateLUT3DTexture(const std::vector<uint32_t>& data);
+  GLuint CreateLUT3DTexture(const std::vector<uint32_t>& data, int size);
   static std::vector<float> GenerateDegammaLUT();
   static std::vector<float> GeneratePQLUT(float sdrPeak);
-  static std::vector<uint32_t> GeneratePQLUT3D(float sdrPeak);
+  static std::vector<uint32_t> GeneratePQLUT3D(float sdrPeak, bool limited);
+  static std::vector<uint32_t> GenerateHLGLUT3D(float sdrPeak, bool limited);
 
   const Input m_input;
   const GLfloat* m_proj{nullptr};
   float m_sdrPeak{203.0f / 10000.0f};
+  bool m_limited{false};
 
   GLuint m_lutDegammaTexId{0};
   GLuint m_lutTFTexId{0};
   GLuint m_lut3DTexId{0};
+  int m_lut3DSize{0};
   float m_ootfGamma{0.0f};
   float m_hlgWhite{0.0f};
 
@@ -84,6 +93,7 @@ private:
   GLint m_hLutDegamma{-1};
   GLint m_hLutTF{-1};
   GLint m_hLut3D{-1};
+  GLint m_hLut3DMap{-1};
   GLint m_hProj{-1};
   GLint m_hOotfGamma{-1};
   GLint m_hHlgWhite{-1};

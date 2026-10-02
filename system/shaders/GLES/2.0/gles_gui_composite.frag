@@ -43,10 +43,10 @@ const PQ_INDEX_PRECISION float PQ_LUT_SCALE = (KODI_PQ_LUT_SIZE - 1.0) / KODI_PQ
 const PQ_INDEX_PRECISION float PQ_LUT_OFFSET = 0.5 / KODI_PQ_LUT_SIZE;
 
 #ifdef KODI_GUI_LUT3D
-// sRGB -> PQ in one fetch; node i sits at sRGB value (i / (KODI_LUT3D_SIZE - 1))^2
+// sRGB -> output code in one fetch; node i sits at sRGB value (i / (size - 1))^2
 uniform mediump sampler3D u_lut3d;
-const float LUT3D_SCALE = (KODI_LUT3D_SIZE - 1.0) / KODI_LUT3D_SIZE;
-const float LUT3D_OFFSET = 0.5 / KODI_LUT3D_SIZE;
+// texel-centre scale and offset for the size of the LUT
+uniform highp vec2 u_lut3dMap;
 #endif
 
 // BT.709 -> BT.2020 color space conversion matrix (applied in linear light)
@@ -67,7 +67,7 @@ void main()
     discard;
 
 #ifdef KODI_GUI_LUT3D
-  vec3 result = texture3D(u_lut3d, sqrt(gui.rgb) * LUT3D_SCALE + LUT3D_OFFSET).rgb;
+  vec3 result = texture3D(u_lut3d, sqrt(gui.rgb) * u_lut3dMap.x + u_lut3dMap.y).rgb;
 #else
   // sRGB -> linear via LUT (IEC 61966-2-1 EOTF, replaces inline pow)
   vec3 d = gui.rgb * LUT_SCALE + LUT_OFFSET;
@@ -123,8 +123,9 @@ void main()
 
   // Limited-range encoding at the BO write boundary. Canonical normalized
   // ratios (bit-depth-agnostic in float space; BO write quantizes to the
-  // active surface bit depth).
-#ifdef KODI_LIMITED_RANGE
+  // active surface bit depth). The 3D LUT holds the range itself, since HLG
+  // goes above 1.0 before the limited-range scale.
+#if defined(KODI_LIMITED_RANGE) && !defined(KODI_GUI_LUT3D)
   result = result * ((235.0 - 16.0) / 255.0) + (16.0 / 255.0);
 #endif
 

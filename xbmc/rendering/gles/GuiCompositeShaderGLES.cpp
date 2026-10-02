@@ -63,6 +63,56 @@ float SRGBToLinear(float v)
   return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
 }
 
+// BT.2100 HLG as gles_gui_composite.frag computes it. OOTF gamma = 1.2 + 0.42 *
+// log10(Lw / 1000), so 1.2 for the 1000-nit reference display.
+constexpr double HLG_GAMMA = 1.2;
+constexpr std::array<double, 3> BT2020_LUMA = {0.2627, 0.6780, 0.0593};
+constexpr double HLG_A = 0.17883277;
+constexpr double HLG_B = 0.28466892;
+constexpr double HLG_C = 0.55991073;
+
+// RGB10_A2 nodes of a size^3 composite LUT: node i sits at sRGB value (i / (size - 1))^2,
+// transfer maps the node's BT.2020 linear light to the output, which is stored in the
+// active range and rounded here
+template<typename Transfer>
+std::vector<uint32_t> GenerateLUT3D(int size, bool limited, Transfer transfer)
+{
+  std::vector<double> linear(size);
+  for (int i = 0; i < size; i++)
+  {
+    const double x = static_cast<double>(i) / (size - 1);
+    linear[i] = SRGBToLinear(static_cast<float>(x * x));
+  }
+
+  std::vector<uint32_t> lut;
+  lut.reserve(size * size * size);
+  for (int b = 0; b < size; b++)
+  {
+    for (int g = 0; g < size; g++)
+    {
+      for (int r = 0; r < size; r++)
+      {
+        const std::array<double, 3> rgb = {linear[r], linear[g], linear[b]};
+        std::array<double, 3> bt2020;
+        for (int c = 0; c < 3; c++)
+        {
+          const auto& row = BT709_TO_BT2020[c];
+          bt2020[c] = row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2];
+        }
+        const std::array<double, 3> out = transfer(bt2020);
+        uint32_t texel = 3u << 30;
+        for (int c = 0; c < 3; c++)
+        {
+          const double v = limited ? out[c] * (219.0 / 255.0) + 16.0 / 255.0 : out[c];
+          texel |= static_cast<uint32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 1023.0)) << (10 * c);
+        }
+        lut.push_back(texel);
+      }
+    }
+  }
+  return lut;
+}
+
 // IEEE 754 binary16, round to nearest even, for finite input
 uint16_t FloatToHalf(float value)
 {
@@ -104,8 +154,7 @@ CGuiCompositeShaderGLES::CGuiCompositeShaderGLES(const std::string& prefix, Inpu
   std::string defines = prefix + "#define KODI_LUT_SIZE " + std::to_string(LUT_SIZE) +
                         ".0\n#define KODI_PQ_LUT_SIZE " + std::to_string(PQ_LUT_SIZE) + ".0\n";
   if (m_input == Input::LUT3D)
-    defines += "#define KODI_GUI_LUT3D 1\n#define KODI_LUT3D_SIZE " +
-               std::to_string(LUT3D_SIZE) + ".0\n";
+    defines += "#define KODI_GUI_LUT3D 1\n";
   VertexShader()->LoadSource("gles_gui_composite.vert", defines);
   PixelShader()->LoadSource("gles_gui_composite.frag", defines);
 }
@@ -128,6 +177,7 @@ void CGuiCompositeShaderGLES::OnCompiledAndLinked()
   m_hLutDegamma = glGetUniformLocation(ProgramHandle(), "u_lutDegamma");
   m_hLutTF = glGetUniformLocation(ProgramHandle(), "u_lutTF");
   m_hLut3D = glGetUniformLocation(ProgramHandle(), "u_lut3d");
+  m_hLut3DMap = glGetUniformLocation(ProgramHandle(), "u_lut3dMap");
   m_hProj = glGetUniformLocation(ProgramHandle(), "u_proj");
   m_hOotfGamma = glGetUniformLocation(ProgramHandle(), "u_ootfGamma");
   m_hHlgWhite = glGetUniformLocation(ProgramHandle(), "u_hlgWhite");
@@ -153,6 +203,8 @@ bool CGuiCompositeShaderGLES::OnEnabled()
   glBindTexture(GL_TEXTURE_2D, m_lutTFTexId);
   if (m_input == Input::LUT3D)
   {
+    // texel-centre addressing: input x samples node x * (size - 1) exactly
+    glUniform2f(m_hLut3DMap, (m_lut3DSize - 1.0f) / m_lut3DSize, 0.5f / m_lut3DSize);
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_3D, m_lut3DTexId);
   }
@@ -217,7 +269,7 @@ GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data,
   return texId;
 }
 
-GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& data)
+GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& data, int size)
 {
   while (glGetError() != GL_NO_ERROR)
   {
@@ -226,7 +278,7 @@ GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& 
   GLuint texId;
   glGenTextures(1, &texId);
   glBindTexture(GL_TEXTURE_3D, texId);
-  glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB10_A2, LUT3D_SIZE, LUT3D_SIZE, LUT3D_SIZE, 0, GL_RGBA,
+  glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB10_A2, size, size, size, 0, GL_RGBA,
                GL_UNSIGNED_INT_2_10_10_10_REV, data.data());
   const bool uploaded = glGetError() == GL_NO_ERROR;
   glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -239,7 +291,7 @@ GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& 
   if (!uploaded)
   {
     CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUT3DTexture - failed to create {}^3 LUT",
-              LUT3D_SIZE);
+              size);
     glDeleteTextures(1, &texId);
     return 0;
   }
@@ -291,7 +343,7 @@ std::vector<float> CGuiCompositeShaderGLES::GeneratePQLUT(float sdrPeak)
   return lut;
 }
 
-std::vector<uint32_t> CGuiCompositeShaderGLES::GeneratePQLUT3D(float sdrPeak)
+std::vector<uint32_t> CGuiCompositeShaderGLES::GeneratePQLUT3D(float sdrPeak, bool limited)
 {
   // RGB10_A2 nodes: 8-bit nodes lose up to three codes at 10 bit, half floats filter
   // at half rate. A live guipeakluminance change rebuilds this on the GUI thread, so
@@ -299,41 +351,45 @@ std::vector<uint32_t> CGuiCompositeShaderGLES::GeneratePQLUT3D(float sdrPeak)
   const std::vector<float> table = GeneratePQLUT(sdrPeak);
   const std::vector<double> pq(table.begin(), table.end());
 
-  std::array<double, LUT3D_SIZE> linear;
-  for (int i = 0; i < LUT3D_SIZE; i++)
-  {
-    const double x = static_cast<double>(i) / (LUT3D_SIZE - 1);
-    linear[i] = SRGBToLinear(static_cast<float>(x * x));
-  }
+  return GenerateLUT3D(PQ_LUT3D_SIZE, limited,
+                       [&pq](const std::array<double, 3>& linear)
+                       {
+                         std::array<double, 3> out;
+                         for (int c = 0; c < 3; c++)
+                         {
+                           const double t =
+                               std::sqrt(std::clamp(linear[c], 0.0, 1.0)) * (PQ_LUT_SIZE - 1);
+                           const int i = std::min(static_cast<int>(t), PQ_LUT_SIZE - 2);
+                           out[c] = pq[i] + (pq[i + 1] - pq[i]) * (t - i);
+                         }
+                         return out;
+                       });
+}
 
-  const auto encode = [&pq](double value)
-  {
-    const double t = std::sqrt(std::clamp(value, 0.0, 1.0)) * (PQ_LUT_SIZE - 1);
-    const int i = std::min(static_cast<int>(t), PQ_LUT_SIZE - 2);
-    const double v = pq[i] + (pq[i + 1] - pq[i]) * (t - i);
-    return static_cast<uint32_t>(std::lround(std::clamp(v, 0.0, 1.0) * 1023.0));
-  };
-
-  std::vector<uint32_t> lut;
-  lut.reserve(LUT3D_SIZE * LUT3D_SIZE * LUT3D_SIZE);
-  for (int b = 0; b < LUT3D_SIZE; b++)
-  {
-    for (int g = 0; g < LUT3D_SIZE; g++)
-    {
-      for (int r = 0; r < LUT3D_SIZE; r++)
-      {
-        const std::array<double, 3> rgb = {linear[r], linear[g], linear[b]};
-        uint32_t texel = 3u << 30;
-        for (int c = 0; c < 3; c++)
-        {
-          const auto& row = BT709_TO_BT2020[c];
-          texel |= encode(row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]) << (10 * c);
-        }
-        lut.push_back(texel);
-      }
-    }
-  }
-  return lut;
+std::vector<uint32_t> CGuiCompositeShaderGLES::GenerateHLGLUT3D(float sdrPeak, bool limited)
+{
+  // The shader's HLG formula per node. Its OOTF scales all three channels by the
+  // luminance, so the curve does not split into 1D tables.
+  const double white = sdrPeak * 10000.0f / 1000.0f;
+  return GenerateLUT3D(HLG_LUT3D_SIZE, limited,
+                       [white](const std::array<double, 3>& linear)
+                       {
+                         std::array<double, 3> scene;
+                         for (int c = 0; c < 3; c++)
+                           scene[c] = linear[c] * white;
+                         const double y = BT2020_LUMA[0] * scene[0] + BT2020_LUMA[1] * scene[1] +
+                                          BT2020_LUMA[2] * scene[2];
+                         const double scale =
+                             12.0 * std::pow(std::max(1e-6, y), (1.0 - HLG_GAMMA) / HLG_GAMMA);
+                         std::array<double, 3> out;
+                         for (int c = 0; c < 3; c++)
+                         {
+                           const double s = scene[c] * scale;
+                           out[c] = s >= 1.0 ? HLG_A * std::log(std::max(s - HLG_B, 1e-6)) + HLG_C
+                                             : 0.5 * std::sqrt(std::max(s, 0.0));
+                         }
+                         return out;
+                       });
 }
 
 bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
@@ -359,14 +415,20 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
   float hlgWhite = 0.0f;
 
   GLuint tf3D = 0;
+  int lut3DSize = 0;
 
-  if (colorTransfer == AVCOL_TRC_SMPTE2084 && m_input == Input::LUT3D)
+  if (m_input == Input::LUT3D &&
+      (colorTransfer == AVCOL_TRC_SMPTE2084 || colorTransfer == AVCOL_TRC_ARIB_STD_B67))
   {
-    tf3D = CreateLUT3DTexture(GeneratePQLUT3D(m_sdrPeak));
+    const bool pq = colorTransfer == AVCOL_TRC_SMPTE2084;
+    lut3DSize = pq ? PQ_LUT3D_SIZE : HLG_LUT3D_SIZE;
+    tf3D = CreateLUT3DTexture(pq ? GeneratePQLUT3D(m_sdrPeak, m_limited)
+                                 : GenerateHLGLUT3D(m_sdrPeak, m_limited),
+                              lut3DSize);
     if (!tf3D)
       return false;
-    CLog::Log(LOGDEBUG, "CGuiCompositeShaderGLES::CreateLUTs - created PQ 3D LUT ({}^3, {:.0f} nits)",
-              LUT3D_SIZE, m_sdrPeak * 10000.0f);
+    CLog::Log(LOGDEBUG, "CGuiCompositeShaderGLES::CreateLUTs - created {} 3D LUT ({}^3, {:.0f} nits)",
+              pq ? "PQ" : "HLG", lut3DSize, m_sdrPeak * 10000.0f);
   }
   else if (colorTransfer == AVCOL_TRC_SMPTE2084)
   {
@@ -381,16 +443,10 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
               "CGuiCompositeShaderGLES::CreateLUTs - created PQ LUT ({} entries, {:.0f} nits)",
               PQ_LUT_SIZE, m_sdrPeak * 10000.0f);
   }
-  else if (m_input == Input::LUT3D)
-  {
-    CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUTs - the 3D LUT is PQ only");
-    return false;
-  }
   else if (colorTransfer == AVCOL_TRC_ARIB_STD_B67)
   {
     // HLG: no TF LUT needed, shader computes OETF + inverse OOTF directly.
-    // BT.2100: gamma = 1.2 + 0.42 * log10(Lw/1000). For 1000-nit ref: 1.2.
-    ootfGamma = 1.2f;
+    ootfGamma = static_cast<float>(HLG_GAMMA);
     hlgWhite = m_sdrPeak * 10000.0f / 1000.0f;
     CLog::Log(LOGDEBUG, "CGuiCompositeShaderGLES::CreateLUTs - HLG mode (gamma {}, {:.0f} nits)",
               ootfGamma, m_sdrPeak * 10000.0f);
@@ -413,6 +469,7 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
   m_lutDegammaTexId = degamma;
   m_lutTFTexId = tf;
   m_lut3DTexId = tf3D;
+  m_lut3DSize = lut3DSize;
   m_ootfGamma = ootfGamma;
   m_hlgWhite = hlgWhite;
   return true;

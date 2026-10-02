@@ -359,10 +359,9 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
 
     // chosen on every call: a session keeps its owner across a renderer
     // reconfigure, so the transfer can change within one session; the 3D LUT
-    // folds the sRGB decode into its one fetch, so PQ prefers it
+    // folds the sRGB decode and the transfer into its one fetch, so both prefer it
     using Input = CGuiCompositeShaderGLES::Input;
-    const bool lut3D = colorTransfer == AVCOL_TRC_SMPTE2084 && m_RenderVersionMajor >= 3 &&
-                       IsExtSupported("GL_OES_texture_3D");
+    const bool lut3D = m_RenderVersionMajor >= 3 && IsExtSupported("GL_OES_texture_3D");
     if (!(lut3D && BuildGuiComposite(Input::LUT3D, colorTransfer, peak)) &&
         !BuildGuiComposite(Input::LUT, colorTransfer, peak))
     {
@@ -406,6 +405,7 @@ bool CWinSystemAmlogicGLESContext::BuildGuiComposite(CGuiCompositeShaderGLES::In
   }
 
   m_compositeShader->SetSdrPeak(peak);
+  m_compositeShader->SetLimitedRange(limited);
   if (!m_compositeShader->CreateLUTs(colorTransfer))
   {
     CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to create LUTs");
