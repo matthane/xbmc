@@ -138,7 +138,8 @@ bool CGUIWindowVideoBase::OnMessage(CGUIMessage& message)
 
   case GUI_MSG_WINDOW_INIT:
     {
-      m_database.Open();
+      if (!m_database.IsOpen())
+        m_database.Open();
       m_dlgProgress = CServiceBroker::GetGUI()->GetWindowManager().GetWindow<CGUIDialogProgress>(WINDOW_DIALOG_PROGRESS);
       return CGUIMediaWindow::OnMessage(message);
     }
