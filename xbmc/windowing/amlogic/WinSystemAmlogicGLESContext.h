@@ -17,6 +17,7 @@
 #include "utils/StreamDetails.h"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 
 namespace KODI
@@ -99,11 +100,31 @@ private:
   // range the shader was compiled for
   bool m_guiCompositeLimited{false};
 
+  // draws until a 3D LUT for the transfer and range is loaded
   std::unique_ptr<CGuiCompositeShaderGLES> m_compositeShader;
 
+  // the 3D LUT composite; a job builds its nodes, and the GUI thread loads them
+  struct Lut3DKey
+  {
+    int colorTransfer{0};
+    float peak{0.0f};
+    bool limited{false};
+    bool operator==(const Lut3DKey&) const = default;
+  };
+  struct CLut3DBuild;
+  std::unique_ptr<CGuiCompositeShaderGLES> m_lut3DShader;
+  Lut3DKey m_lut3DKey;
+  bool m_lut3D{false};
+  bool m_lut3DPending{false};
+  std::shared_ptr<CLut3DBuild> m_lut3DBuild;
+
   void PrecompileGuiComposite();
-  bool CompileGuiComposite(CGuiCompositeShaderGLES::Input input, bool limited);
-  bool BuildGuiComposite(CGuiCompositeShaderGLES::Input input, int colorTransfer, float peak);
+  bool CompileGuiComposite(bool limited);
+  bool BuildGuiComposite(int colorTransfer, float peak, bool limited);
+  CGuiCompositeShaderGLES& GetCompositeShader() const;
+  void RequestLut3D();
+  void LoadLut3D();
+  void CancelLut3D();
 
   void ResetHdrGuiSession();
   bool SetDvGraphicFormat(unsigned int format);

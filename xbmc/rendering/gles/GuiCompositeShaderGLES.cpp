@@ -271,6 +271,13 @@ GLuint CGuiCompositeShaderGLES::CreateLUTTexture(const std::vector<float>& data,
 
 GLuint CGuiCompositeShaderGLES::CreateLUT3DTexture(const std::vector<uint32_t>& data, int size)
 {
+  if (data.size() != static_cast<size_t>(size) * size * size)
+  {
+    CLog::Log(LOGERROR, "CGuiCompositeShaderGLES::CreateLUT3DTexture - {} nodes for a {}^3 LUT",
+              data.size(), size);
+    return 0;
+  }
+
   while (glGetError() != GL_NO_ERROR)
   {
   }
@@ -346,8 +353,8 @@ std::vector<float> CGuiCompositeShaderGLES::GeneratePQLUT(float sdrPeak)
 std::vector<uint32_t> CGuiCompositeShaderGLES::GeneratePQLUT3D(float sdrPeak, bool limited)
 {
   // RGB10_A2 nodes: 8-bit nodes lose up to three codes at 10 bit, half floats filter
-  // at half rate. A live guipeakluminance change rebuilds this on the GUI thread, so
-  // the ~36k nodes read the PQ curve from the 1D LUT instead of calling pow.
+  // at half rate. A live guipeakluminance change rebuilds this, so the ~36k nodes read
+  // the PQ curve from the 1D LUT instead of calling pow.
   const std::vector<float> table = GeneratePQLUT(sdrPeak);
   const std::vector<double> pq(table.begin(), table.end());
 
@@ -392,7 +399,18 @@ std::vector<uint32_t> CGuiCompositeShaderGLES::GenerateHLGLUT3D(float sdrPeak, b
                        });
 }
 
-bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
+std::vector<uint32_t> CGuiCompositeShaderGLES::GenerateLUT3DNodes(int colorTransfer,
+                                                                  float sdrPeak,
+                                                                  bool limited)
+{
+  if (colorTransfer == AVCOL_TRC_SMPTE2084)
+    return GeneratePQLUT3D(sdrPeak, limited);
+  if (colorTransfer == AVCOL_TRC_ARIB_STD_B67)
+    return GenerateHLGLUT3D(sdrPeak, limited);
+  return {};
+}
+
+bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer, const std::vector<uint32_t>& lut3D)
 {
   // Build into locals and only commit on success. Deleting the live textures up
   // front would leave the shader sampling destroyed/zero texture names on any
@@ -422,9 +440,7 @@ bool CGuiCompositeShaderGLES::CreateLUTs(int colorTransfer)
   {
     const bool pq = colorTransfer == AVCOL_TRC_SMPTE2084;
     lut3DSize = pq ? PQ_LUT3D_SIZE : HLG_LUT3D_SIZE;
-    tf3D = CreateLUT3DTexture(pq ? GeneratePQLUT3D(m_sdrPeak, m_limited)
-                                 : GenerateHLGLUT3D(m_sdrPeak, m_limited),
-                              lut3DSize);
+    tf3D = CreateLUT3DTexture(lut3D, lut3DSize);
     if (!tf3D)
       return false;
     CLog::Log(LOGDEBUG, "CGuiCompositeShaderGLES::CreateLUTs - created {} 3D LUT ({}^3, {:.0f} nits)",

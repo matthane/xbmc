@@ -38,16 +38,17 @@ public:
   // the next CreateLUTs, which bakes it into the PQ LUT or the HLG white scale.
   void SetSdrPeak(float peak) { m_sdrPeak = peak; }
 
-  // Limited-range output. Takes effect on the next CreateLUTs, which bakes it into
-  // the 3D LUT; the other inputs apply it in the shader.
-  void SetLimitedRange(bool limited) { m_limited = limited; }
-
   // Convert a legacy PQ-signal-domain GUI peak (as CWinSystemAmlogic::
   // GetGuiSdrPeakLuminance returns) into the PQ-normalized luminance SetSdrPeak
   // expects. Lives here so the ST2084 constants are never duplicated.
   static float PeakFromPQCode(float code);
 
-  bool CreateLUTs(int colorTransfer);
+  // The nodes of the 3D LUT for a transfer, GUI reference white and output range: pure
+  // CPU work of a frame or more, safe on any thread.
+  static std::vector<uint32_t> GenerateLUT3DNodes(int colorTransfer, float sdrPeak, bool limited);
+
+  // Input::LUT3D takes the nodes GenerateLUT3DNodes built for the transfer
+  bool CreateLUTs(int colorTransfer, const std::vector<uint32_t>& lut3D = {});
 
   GLint GetPosLoc() { return m_hPos; }
   GLint GetTexLoc() { return m_hTex; }
@@ -78,7 +79,6 @@ private:
   const Input m_input;
   const GLfloat* m_proj{nullptr};
   float m_sdrPeak{203.0f / 10000.0f};
-  bool m_limited{false};
 
   GLuint m_lutDegammaTexId{0};
   GLuint m_lutTFTexId{0};

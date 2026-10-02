@@ -11,6 +11,9 @@
 #include "cores/VideoPlayer/DVDCodecs/Video/AMLCodec.h"
 #include "platform/linux/SysfsPath.h"
 #include "ServiceBroker.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
+#include "jobs/JobManager.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/AMLUtils.h"
@@ -21,6 +24,8 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WindowSystemFactory.h"
 
+#include <optional>
+
 extern "C"
 {
 #include <libavutil/pixfmt.h>
@@ -30,8 +35,38 @@ using namespace KODI;
 using namespace KODI::WINDOWING::AML;
 using namespace std::chrono_literals;
 
+// shared with the job, which may outlive the window system; nodes nobody wants are dropped
+struct CWinSystemAmlogicGLESContext::CLut3DBuild
+{
+  void Run()
+  {
+    std::unique_lock lock(mutex);
+    while (wanted && built != wanted)
+    {
+      const Lut3DKey key = *wanted;
+      lock.unlock();
+      std::vector<uint32_t> lut =
+          CGuiCompositeShaderGLES::GenerateLUT3DNodes(key.colorTransfer, key.peak, key.limited);
+      lock.lock();
+      if (wanted == key)
+      {
+        built = key;
+        nodes = std::move(lut);
+      }
+    }
+    building = false;
+  }
+
+  std::mutex mutex;
+  std::optional<Lut3DKey> wanted;
+  std::optional<Lut3DKey> built;
+  std::vector<uint32_t> nodes;
+  bool building{false};
+};
+
 CWinSystemAmlogicGLESContext::CWinSystemAmlogicGLESContext()
-: m_pGLContext(new CEGLContextUtils(EGL_PLATFORM_GBM_MESA, "EGL_EXT_platform_base"))
+: m_pGLContext(new CEGLContextUtils(EGL_PLATFORM_GBM_MESA, "EGL_EXT_platform_base")),
+  m_lut3DBuild(std::make_shared<CLut3DBuild>())
 {
 }
 
@@ -97,6 +132,7 @@ bool CWinSystemAmlogicGLESContext::DestroyWindowSystem()
 {
   ResetHdrGuiSession();
   m_compositeShader.reset();
+  m_lut3DShader.reset();
 
   if (IsPresentationReady())
   {
@@ -361,27 +397,35 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
     // control here too and means the same thing as on the per-primitive path.
     // At the shipped default this is ~199 nits, i.e. a <2% change from before.
     const float peak(CGuiCompositeShaderGLES::PeakFromPQCode(GetGuiSdrPeakLuminance()));
+    const bool limited = UseLimitedColor();
 
     // chosen on every call: a session keeps its owner across a renderer
     // reconfigure, so the transfer can change within one session; the 3D LUT
     // folds the sRGB decode and the transfer into its one fetch, so both prefer it
-    using Input = CGuiCompositeShaderGLES::Input;
-    const bool lut3D = m_RenderVersionMajor >= 3 && IsExtSupported("GL_OES_texture_3D");
-    if (!(lut3D && BuildGuiComposite(Input::LUT3D, colorTransfer, peak)) &&
-        !BuildGuiComposite(Input::LUT, colorTransfer, peak))
+    // once its nodes are built
+    if (!BuildGuiComposite(colorTransfer, peak, limited))
     {
       m_compositeShader.reset();
+      m_lut3DShader.reset();
+      CancelLut3D();
       m_guiCompositing = false;
       return false;
     }
     m_guiCompositeTransfer = colorTransfer;
     m_guiCompositePeak = peak;
+    // only a live step may keep drawing the 3D LUT of an earlier peak
+    if (m_lut3DKey.peak != peak)
+      m_lut3DKey = {};
+    m_lut3D = m_lut3DShader &&
+              (colorTransfer == AVCOL_TRC_SMPTE2084 || colorTransfer == AVCOL_TRC_ARIB_STD_B67);
+    RequestLut3D();
   }
   else
   {
     m_guiFbo.Cleanup();
     m_guiFboWidth = 0;
     m_guiFboHeight = 0;
+    CancelLut3D();
   }
 
   return m_guiCompositing;
@@ -401,49 +445,131 @@ void CWinSystemAmlogicGLESContext::PrecompileGuiComposite()
   // a compile takes a frame or more, which no HDR playback start should pay; a display
   // without HDR compiles at its first use, and a running composite keeps its programs
   if (IsHDRDisplay() && !m_guiCompositing)
-    CompileGuiComposite(m_RenderVersionMajor >= 3 && IsExtSupported("GL_OES_texture_3D")
-                            ? CGuiCompositeShaderGLES::Input::LUT3D
-                            : CGuiCompositeShaderGLES::Input::LUT,
-                        UseLimitedColor());
+    CompileGuiComposite(UseLimitedColor());
 }
 
-bool CWinSystemAmlogicGLESContext::CompileGuiComposite(CGuiCompositeShaderGLES::Input input,
-                                                       bool limited)
+bool CWinSystemAmlogicGLESContext::CompileGuiComposite(bool limited)
 {
-  if (m_compositeShader && m_compositeShader->GetInput() == input &&
-      m_guiCompositeLimited == limited)
-    return true;
-
-  std::string defines;
-  if (limited)
-    defines += "#define KODI_LIMITED_RANGE 1\n";
-  auto shader = std::make_unique<CGuiCompositeShaderGLES>(defines, input);
-  if (!shader->CompileAndLink())
+  if (m_RenderVersionMajor >= 3 && IsExtSupported("GL_OES_texture_3D") && !m_lut3DShader)
   {
-    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
-    return false;
+    auto shader =
+        std::make_unique<CGuiCompositeShaderGLES>("", CGuiCompositeShaderGLES::Input::LUT3D);
+    if (shader->CompileAndLink())
+    {
+      m_lut3DShader = std::move(shader);
+      m_lut3DKey = {};
+    }
+    else
+      CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
   }
-  m_compositeShader = std::move(shader);
-  m_guiCompositeLimited = limited;
+
+  if (!m_compositeShader || m_guiCompositeLimited != limited)
+  {
+    std::string defines;
+    if (limited)
+      defines += "#define KODI_LIMITED_RANGE 1\n";
+    auto shader = std::make_unique<CGuiCompositeShaderGLES>(defines);
+    if (!shader->CompileAndLink())
+    {
+      CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
+      return false;
+    }
+    m_compositeShader = std::move(shader);
+    m_guiCompositeLimited = limited;
+  }
   return true;
 }
 
-bool CWinSystemAmlogicGLESContext::BuildGuiComposite(CGuiCompositeShaderGLES::Input input,
-                                                     int colorTransfer,
-                                                     float peak)
+bool CWinSystemAmlogicGLESContext::BuildGuiComposite(int colorTransfer, float peak, bool limited)
 {
-  const bool limited = UseLimitedColor();
-  if (!CompileGuiComposite(input, limited))
+  if (!CompileGuiComposite(limited))
     return false;
 
   m_compositeShader->SetSdrPeak(peak);
-  m_compositeShader->SetLimitedRange(limited);
   if (!m_compositeShader->CreateLUTs(colorTransfer))
   {
     CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to create LUTs");
     return false;
   }
   return true;
+}
+
+CGuiCompositeShaderGLES& CWinSystemAmlogicGLESContext::GetCompositeShader() const
+{
+  // a 3D LUT for an earlier peak draws until the one for the new peak is loaded
+  if (m_lut3DShader && m_lut3DKey.colorTransfer == m_guiCompositeTransfer &&
+      m_lut3DKey.limited == m_guiCompositeLimited)
+    return *m_lut3DShader;
+  return *m_compositeShader;
+}
+
+void CWinSystemAmlogicGLESContext::RequestLut3D()
+{
+  const Lut3DKey key{m_guiCompositeTransfer, m_guiCompositePeak, m_guiCompositeLimited};
+  if (!m_lut3D || (m_lut3DShader && m_lut3DKey == key))
+  {
+    CancelLut3D();
+    return;
+  }
+
+  m_lut3DPending = true;
+  std::unique_lock lock(m_lut3DBuild->mutex);
+  if (m_lut3DBuild->wanted == key && (m_lut3DBuild->building || m_lut3DBuild->built))
+    return;
+  m_lut3DBuild->wanted = key;
+  m_lut3DBuild->built.reset();
+  if (m_lut3DBuild->building)
+    return;
+  m_lut3DBuild->building = true;
+  lock.unlock();
+
+  // the nodes take a frame or more of CPU time, which the GUI thread must not stall on
+  if (!CServiceBroker::GetJobManager()->AddJob(
+          new CLambdaJob([build = m_lut3DBuild]() { build->Run(); }), nullptr,
+          CJob::PRIORITY_HIGH))
+  {
+    lock.lock();
+    m_lut3DBuild->building = false;
+    m_lut3DBuild->wanted.reset();
+    m_lut3DPending = false;
+  }
+}
+
+void CWinSystemAmlogicGLESContext::LoadLut3D()
+{
+  Lut3DKey key;
+  std::vector<uint32_t> nodes;
+  {
+    std::unique_lock lock(m_lut3DBuild->mutex);
+    if (!m_lut3DBuild->built)
+      return;
+    key = *m_lut3DBuild->built;
+    nodes = std::move(m_lut3DBuild->nodes);
+    m_lut3DBuild->built.reset();
+  }
+  m_lut3DPending = false;
+
+  m_lut3DShader->SetSdrPeak(key.peak);
+  if (!m_lut3DShader->CreateLUTs(key.colorTransfer, nodes))
+  {
+    // the analytic composite is built for the current key
+    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to create LUTs");
+    key = {};
+  }
+  m_lut3DKey = key;
+
+  // a skipped frame shows the composite of the last drawn one
+  if (!m_guiWillRender)
+    CServiceBroker::GetGUI()->GetWindowManager().MarkDirty();
+}
+
+void CWinSystemAmlogicGLESContext::CancelLut3D()
+{
+  m_lut3DPending = false;
+  std::unique_lock lock(m_lut3DBuild->mutex);
+  m_lut3DBuild->wanted.reset();
+  m_lut3DBuild->built.reset();
+  m_lut3DBuild->nodes = std::vector<uint32_t>();
 }
 
 bool CWinSystemAmlogicGLESContext::SetDvGraphicFormat(unsigned int format)
@@ -588,6 +714,9 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
   //! post-PQ GUI plane back buffer directly via display HW, and single-plane
   //! never reaches !guiWillRender (the dirty-driven skip is gated on
   //! IsRenderingVideoLayer).
+  if (m_lut3DPending)
+    LoadLut3D();
+
   if (!guiWillRender)
     return true;
 
@@ -602,7 +731,8 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
     if (peak != m_guiCompositePeak)
     {
       m_compositeShader->SetSdrPeak(peak);
-      if (!m_compositeShader->CreateLUTs(m_guiCompositeTransfer))
+      const bool rebuilt = m_compositeShader->CreateLUTs(m_guiCompositeTransfer);
+      if (!rebuilt)
       {
         // CreateLUTs commits only on success, so the previous LUTs are still
         // live and the GUI keeps rendering correctly at the old reference white.
@@ -613,6 +743,8 @@ bool CWinSystemAmlogicGLESContext::BeginGuiComposite(bool guiWillRender)
         m_compositeShader->SetSdrPeak(m_guiCompositePeak);
       }
       m_guiCompositePeak = peak;
+      if (rebuilt)
+        RequestLut3D();
     }
   }
 
@@ -654,6 +786,7 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
 {
   if (!m_guiFbo.IsValid() || !m_guiFbo.IsBound() || !m_compositeShader)
     return;
+  CGuiCompositeShaderGLES& shader = GetCompositeShader();
 
   // Only update m_guiFboClean when GUI render fired this frame; otherwise the
   // FBO is in the same state as the previous frame and the flag stays as-is.
@@ -685,11 +818,11 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
 
   GLfloat proj[16] = {2.0f / w, 0, 0, 0, 0, -2.0f / h, 0, 0, 0, 0, -1, 0, -1.0f, 1.0f, 0, 1};
 
-  m_compositeShader->SetProjection(proj);
-  m_compositeShader->Enable();
+  shader.SetProjection(proj);
+  shader.Enable();
 
-  GLint posLoc = m_compositeShader->GetPosLoc();
-  GLint texLoc = m_compositeShader->GetTexLoc();
+  GLint posLoc = shader.GetPosLoc();
+  GLint texLoc = shader.GetTexLoc();
 
   GLfloat vert[4][2] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
   GLfloat tex[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
@@ -705,7 +838,7 @@ void CWinSystemAmlogicGLESContext::CompositeGui()
   glDisableVertexAttribArray(posLoc);
   glDisableVertexAttribArray(texLoc);
 
-  m_compositeShader->Disable();
+  shader.Disable();
 }
 
 EGLDisplay CWinSystemAmlogicGLESContext::GetEGLDisplay() const
