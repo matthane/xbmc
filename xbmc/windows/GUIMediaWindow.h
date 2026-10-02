@@ -16,6 +16,7 @@
 #include "view/GUIViewControl.h"
 
 #include <atomic>
+#include <vector>
 
 class CFileItemList;
 class CGUIViewState;
@@ -160,6 +161,23 @@ protected:
   bool WaitForNetwork() const;
   bool GetDirectoryItems(CURL& url, CFileItemList& items, bool useDir);
 
+  /*! \brief Called once per activation, after the first fetch and the control state restore
+   */
+  virtual void OnInitialDirectoryLoaded() {}
+
+  /*! \brief The deferred first fetch, with the steps a synchronous one takes after it
+   */
+  void LoadDeferredDirectory();
+
+  /*! \brief Hold a refresh request that arrives while the deferred first fetch runs
+   \return true if the message was held and must not be processed now
+   */
+  bool HoldWhileUpdating(const CGUIMessage& message);
+
+  /*! \brief Whether the message is the deferred first fetch of a network or plugin listing
+   */
+  static bool IsDeferredInit(const CGUIMessage& message);
+
   /*! \brief Translate the folder to start in from the given quick path
    \param url the folder the user wants
    \return the resulting path */
@@ -224,4 +242,9 @@ protected:
    */
   std::string m_strFilterPath;
   bool m_backgroundLoad = false;
+  bool m_updateStartDirectoryOnRefresh{false};
+  // the item an activation names, which a deferred first fetch hands to the subclasses
+  std::string m_initItemPath;
+  bool m_holdMessages{false};
+  std::vector<CGUIMessage> m_heldMessages;
 };

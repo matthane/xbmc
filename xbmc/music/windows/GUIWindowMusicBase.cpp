@@ -180,6 +180,8 @@ bool CGUIWindowMusicBase::OnMessage(CGUIMessage& message)
   // update the display
   case GUI_MSG_SCAN_FINISHED:
   case GUI_MSG_REFRESH_THUMBS: // Never called as is secondary msg sent as GUI_MSG_NOTIFY_ALL
+    if (HoldWhileUpdating(message))
+      return true;
     Refresh();
     break;
 

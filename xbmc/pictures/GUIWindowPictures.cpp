@@ -67,8 +67,14 @@ CGUIWindowPictures::CGUIWindowPictures(void)
 
 void CGUIWindowPictures::OnInitWindow()
 {
+  m_restoreSlideOnLoad = m_slideShowStarted;
+  m_slideShowStarted = false;
   CGUIMediaWindow::OnInitWindow();
-  if (m_slideShowStarted)
+}
+
+void CGUIWindowPictures::OnInitialDirectoryLoaded()
+{
+  if (m_restoreSlideOnLoad)
   {
     CSlideShowDelegator& slideShow = CServiceBroker::GetSlideShowDelegator();
     std::string path;
@@ -80,7 +86,7 @@ void CGUIWindowPictures::OnInitWindow()
         m_viewControl.SetSelectedItem(slideShow.GetCurrentSlide()->GetPath());
       SaveSelectedItemInHistory();
     }
-    m_slideShowStarted = false;
+    m_restoreSlideOnLoad = false;
   }
 }
 

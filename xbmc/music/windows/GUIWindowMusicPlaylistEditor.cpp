@@ -114,7 +114,8 @@ bool CGUIWindowMusicPlaylistEditor::OnMessage(CGUIMessage& message)
         m_vecItems->SetPath("");
       CGUIWindowMusicBase::OnMessage(message);
 
-      if (message.GetNumStringParams())
+      // the deferred first fetch carries the path the first INIT already loaded
+      if (message.GetNumStringParams() && !IsDeferredInit(message))
         LoadPlaylist(message.GetStringParam());
 
       return true;

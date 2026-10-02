@@ -32,6 +32,7 @@ protected:
   bool OnContextButton(int itemNumber, CONTEXT_BUTTON button) override;
   bool OnAddMediaSource() override;
   std::string GetStartFolder(const std::string &dir) override;
+  void OnInitialDirectoryLoaded() override;
 
   void OnRegenerateThumbs();
   bool OnPlayMedia(int iItem, const std::string &player = "") override;
@@ -48,4 +49,5 @@ protected:
 
   CPictureThumbLoader m_thumbLoader;
   bool m_slideShowStarted;
+  bool m_restoreSlideOnLoad{false};
 };
