@@ -48,7 +48,8 @@ COverlay::~COverlay() = default;
 
 void OVERLAY::MarkDirty()
 {
-  CServiceBroker::GetGUI()->GetWindowManager().MarkDirty();
+  // dirtying the windows would make the fullscreen window redraw a second frame
+  CServiceBroker::GetGUI()->GetWindowManager().MarkRegionDirty();
 }
 
 unsigned int CRenderer::m_textureid = 1;
