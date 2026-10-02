@@ -70,6 +70,9 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
       picture.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION && aml_dolby_vision_enabled();
   switch (picture.color_space)
   {
+    // dolby vision is labelled ICtCp; with its core off the base layer goes out as
+    // signalled, with it on for a dv sink dv_graphics below decides
+    case AVCOL_SPC_ICTCP:
     case AVCOL_SPC_BT2020_NCL:
     {
       if (CServiceBroker::GetWinSystem()->IsHDRDisplay())
@@ -91,23 +94,6 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
           default:
             break;
         }
-      }
-      break;
-    }
-
-    case AVCOL_SPC_ICTCP:
-    {
-      auto hdr_cap = CServiceBroker::GetWinSystem()->GetDisplayHDRCapabilities();
-      switch (picture.color_transfer)
-      {
-        case AVCOL_TRC_SMPTE2084:
-          if (hdr_cap.SupportsDolbyVision() != DolbyVisionFormat::DOLBYVISION_TYPE_NONE || hdr_cap.SupportsHDR10())
-          {
-            color_transfer = AVCOL_TRC_SMPTE2084;
-          }
-          break;
-        default:
-          break;
       }
       break;
     }
