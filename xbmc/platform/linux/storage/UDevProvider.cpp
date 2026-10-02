@@ -13,8 +13,10 @@
 #include "utils/URIUtils.h"
 
 extern "C" {
+#include <fcntl.h>
 #include <libudev.h>
 #include <poll.h>
+#include <unistd.h>
 }
 
 namespace
@@ -85,11 +87,18 @@ void CUDevProvider::Initialize()
   udev_monitor_filter_add_match_subsystem_devtype(m_udevMon, "block", "partition");
   udev_monitor_enable_receiving(m_udevMon);
 
+  m_mountsFd = open("/proc/self/mounts", O_RDONLY | O_CLOEXEC);
+
   PumpDriveChangeEvents(nullptr);
 }
 
 void CUDevProvider::Stop()
 {
+  if (m_mountsFd >= 0)
+  {
+    close(m_mountsFd);
+    m_mountsFd = -1;
+  }
   udev_monitor_unref(m_udevMon);
   udev_unref(m_udev);
 }
@@ -206,14 +215,42 @@ void CUDevProvider::GetDisks(std::vector<CMediaSource>& disks, bool removable)
   udev_enumerate_unref(u_enum);
 }
 
+bool CUDevProvider::DisksChanged()
+{
+  if (m_mountsFd < 0)
+    return true;
+
+  // the mounts fd raises POLLPRI once per mount table change and re-arms on this poll; a queued
+  // but not yet pumped block event means udev's view changed
+  struct pollfd fds[] = {{m_mountsFd, POLLPRI, 0}, {udev_monitor_get_fd(m_udevMon), POLLIN, 0}};
+  return poll(fds, 2, 0) != 0;
+}
+
+void CUDevProvider::UpdateDisks(bool removable)
+{
+  if (DisksChanged())
+    ++m_disksGeneration;
+
+  auto& disks = removable ? m_removableDisks : m_localDisks;
+  auto& generation = removable ? m_removableGeneration : m_localGeneration;
+  if (generation == m_disksGeneration)
+    return;
+
+  disks.clear();
+  GetDisks(disks, removable);
+  generation = m_disksGeneration;
+}
+
 void CUDevProvider::GetLocalDrives(std::vector<CMediaSource>& localDrives)
 {
-  GetDisks(localDrives, false);
+  UpdateDisks(false);
+  localDrives.insert(localDrives.end(), m_localDisks.begin(), m_localDisks.end());
 }
 
 void CUDevProvider::GetRemovableDrives(std::vector<CMediaSource>& removableDrives)
 {
-  GetDisks(removableDrives, true);
+  UpdateDisks(true);
+  removableDrives.insert(removableDrives.end(), m_removableDisks.begin(), m_removableDisks.end());
 }
 
 bool CUDevProvider::Eject(const std::string& mountpath)
@@ -254,6 +291,8 @@ bool CUDevProvider::PumpDriveChangeEvents(IStorageEventsCallback *callback)
     struct udev_device* dev = udev_monitor_receive_device(m_udevMon);
     if (!dev)
       return false;
+
+    ++m_disksGeneration;
 
     const char* action = udev_device_get_action(dev);
     const char* devnode = udev_device_get_devnode(dev);
