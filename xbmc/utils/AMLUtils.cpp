@@ -266,6 +266,12 @@ bool aml_convert_to_dv_by_vs_engine(StreamHdrType hdrType)
   return ((convert_to_dv && !!user_convert_to_dv && !!dv_user_enabled) == 1);
 }
 
+bool aml_hdr_to_sdr()
+{
+  return CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+      CSettings::SETTING_COREELEC_AMLOGIC_HDR2SDR);
+}
+
 bool aml_video_started()
 {
   CSysfsPath videostarted{"/sys/class/tsync/videostarted"};

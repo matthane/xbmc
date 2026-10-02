@@ -13,6 +13,8 @@
 #include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFlags.h"
+#include "guilib/GUIComponent.h"
+#include "guilib/GUIWindowManager.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/MediaSettings.h"
 #include "utils/AMLUtils.h"
@@ -119,10 +121,29 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
   if (dv_graphics)
     color_transfer = AVCOL_TRC_SMPTE2084;
 
+  m_colorTransfer = color_transfer;
+  m_dvGraphics = dv_graphics;
+  UpdateHdrGuiSession(GetGuiColorTransfer());
+  m_bConfigured = true;
+
+  return true;
+}
+
+int CRendererAML::GetGuiColorTransfer() const
+{
+  // hdr2sdr tone maps the video and passes the GUI plane through unconverted,
+  // unless dolby vision output takes precedence
+  return (m_dvGraphics || !aml_hdr_to_sdr()) ? m_colorTransfer : 0;
+}
+
+void CRendererAML::UpdateHdrGuiSession(int colorTransfer)
+{
+  m_guiColorTransfer = colorTransfer;
+
   const auto winSystem = static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem());
-  if (color_transfer != 0)
+  if (colorTransfer != 0)
   {
-    m_hdrGuiOwner = winSystem->ConfigureHdrGuiSession(m_hdrGuiOwner, color_transfer, dv_graphics);
+    m_hdrGuiOwner = winSystem->ConfigureHdrGuiSession(m_hdrGuiOwner, colorTransfer, m_dvGraphics);
     if (m_hdrGuiOwner == 0)
       CLog::Log(LOGWARNING, "CRendererAML: HDR GUI composite unavailable; using normal GUI path");
   }
@@ -131,9 +152,6 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
     winSystem->ReleaseHdrGuiSession(m_hdrGuiOwner);
     m_hdrGuiOwner = 0;
   }
-  m_bConfigured = true;
-
-  return true;
 }
 
 CRenderInfo CRendererAML::GetRenderInfo()
@@ -265,11 +283,27 @@ void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int 
     }
     if (codec && codec->IsOpen())
       codec->SetVideoRect(m_sourceRect, m_destRect);
+    // a pending codec means the vsync thread queued a new frame
+    if (codec)
+      FollowGuiColorTransfer();
     return;
   }
 
-  QueueFrame(index, true);
+  if (QueueFrame(index, true))
+    FollowGuiColorTransfer();
   CAMLCodec::PollFrame();
+}
+
+void CRendererAML::FollowGuiColorTransfer()
+{
+  // the driver applies hdr_mode on new frames only, so switch the GUI with it
+  const int guiColorTransfer = GetGuiColorTransfer();
+  if (guiColorTransfer != m_guiColorTransfer)
+  {
+    UpdateHdrGuiSession(guiColorTransfer);
+    // the GUI on screen keeps the old encoding until it is drawn again
+    CServiceBroker::GetGUI()->GetWindowManager().MarkDirty();
+  }
 }
 
 bool CRendererAML::StartVsyncPresent()
