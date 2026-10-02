@@ -10,6 +10,7 @@
 
 #include "guilib/GUIDialog.h"
 
+#include <chrono>
 #include <cstdint>
 
 class IRunnable;
@@ -42,6 +43,8 @@ public:
 private:
   CGUIDialogBusy();
   ~CGUIDialogBusy() override;
+
+  static bool WaitRendering(CEvent& event, std::chrono::milliseconds delay);
 
   void Open_Internal(bool bProcessRenderLoop, const std::string& param = "") override;
   bool OnBack(int actionID) override;

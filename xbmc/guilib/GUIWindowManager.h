@@ -22,6 +22,7 @@
 #include <vector>
 
 class CGUIDialog;
+class CGUIDialogBusy;
 class CGUIMediaWindow;
 
 #ifdef TARGET_WINDOWS_STORE
@@ -49,6 +50,7 @@ namespace KODI
 class CGUIWindowManager : public KODI::MESSAGING::IMessageTarget
 {
   friend CGUIDialog;
+  friend CGUIDialogBusy;
   friend CGUIMediaWindow;
 
 public:
@@ -221,6 +223,10 @@ public:
   int GetActiveWindowOrDialog() const;
   bool HasModalDialog(bool ignoreClosing) const;
   bool HasVisibleModalDialog() const;
+  /*! \brief Checks if the active window or a dialog runs an open, close, visible or hidden
+   *  animation
+   */
+  bool HasAnimatingWindow() const;
   bool IsDialogTopmost(int id, bool modal = false) const;
   bool IsDialogTopmost(const std::string &xmlFile, bool modal = false) const;
   bool IsModalDialogTopmost(int id) const;

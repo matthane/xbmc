@@ -11,6 +11,7 @@
 #include "ServiceBroker.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
+#include "messaging/ApplicationMessenger.h"
 #include "threads/IRunnable.h"
 #include "threads/Thread.h"
 #include "utils/log.h"
@@ -74,7 +75,7 @@ bool CGUIDialogBusy::Wait(IRunnable *runnable, unsigned int displaytime, bool al
 bool CGUIDialogBusy::WaitOnEvent(CEvent &event, unsigned int displaytime /* = 100 */, bool allowCancel /* = true */)
 {
   bool cancelled = false;
-  if (!event.Wait(std::chrono::milliseconds(displaytime)))
+  if (!WaitRendering(event, std::chrono::milliseconds(displaytime)))
   {
     auto* dialog = static_cast<CGUIDialogBusy*>(
         CServiceBroker::GetGUI()->GetWindowManager().GetWindow(WINDOW_DIALOG_BUSY));
@@ -105,6 +106,26 @@ bool CGUIDialogBusy::WaitOnEvent(CEvent &event, unsigned int displaytime /* = 10
     }
   }
   return !cancelled;
+}
+
+// render frames without input or messages while a window animates, as CloseWindowSync does;
+// a static screen keeps the stock wait
+bool CGUIDialogBusy::WaitRendering(CEvent& event, std::chrono::milliseconds delay)
+{
+  auto& wm = CServiceBroker::GetGUI()->GetWindowManager();
+  const auto end = std::chrono::steady_clock::now() + delay;
+  if (CServiceBroker::GetAppMessenger()->IsProcessThread())
+  {
+    while (wm.HasAnimatingWindow())
+    {
+      if (event.Wait(0ms))
+        return true;
+      if (std::chrono::steady_clock::now() >= end || !wm.ProcessRenderLoop(true))
+        break;
+    }
+  }
+  const auto now = std::chrono::steady_clock::now();
+  return event.Wait(now < end ? std::chrono::ceil<std::chrono::milliseconds>(end - now) : 0ms);
 }
 
 CGUIDialogBusy::CGUIDialogBusy(void)
