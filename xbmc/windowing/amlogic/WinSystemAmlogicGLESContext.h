@@ -38,6 +38,7 @@ public:
 
   // Implementation of CWinSystemBase via CWinSystemAmlogic
   CRenderSystemBase *GetRenderSystem() override { return this; }
+  bool InitRenderSystem() override;
   bool InitWindowSystem() override;
   bool DestroyWindowSystem() override;
   bool CreateNewWindow(const std::string& name,
@@ -100,6 +101,8 @@ private:
 
   std::unique_ptr<CGuiCompositeShaderGLES> m_compositeShader;
 
+  void PrecompileGuiComposite();
+  bool CompileGuiComposite(CGuiCompositeShaderGLES::Input input, bool limited);
   bool BuildGuiComposite(CGuiCompositeShaderGLES::Input input, int colorTransfer, float peak);
 
   void ResetHdrGuiSession();

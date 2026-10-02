@@ -96,6 +96,7 @@ bool CWinSystemAmlogicGLESContext::InitWindowSystem()
 bool CWinSystemAmlogicGLESContext::DestroyWindowSystem()
 {
   ResetHdrGuiSession();
+  m_compositeShader.reset();
 
   if (IsPresentationReady())
   {
@@ -231,6 +232,10 @@ bool CWinSystemAmlogicGLESContext::CreateNewWindow(const std::string& name,
     DestroyWindow();
     return false;
   }
+
+  // a display that is plugged in later gets the composite before its first HDR start
+  if (force_mode_switch_by_hotplug && m_bRenderCreated)
+    PrecompileGuiComposite();
 
   if (!m_delayDispReset)
   {
@@ -377,10 +382,50 @@ bool CWinSystemAmlogicGLESContext::SetGuiCompositing(int colorTransfer)
     m_guiFbo.Cleanup();
     m_guiFboWidth = 0;
     m_guiFboHeight = 0;
-    m_compositeShader.reset();
   }
 
   return m_guiCompositing;
+}
+
+bool CWinSystemAmlogicGLESContext::InitRenderSystem()
+{
+  if (!CRenderSystemGLES::InitRenderSystem())
+    return false;
+
+  PrecompileGuiComposite();
+  return true;
+}
+
+void CWinSystemAmlogicGLESContext::PrecompileGuiComposite()
+{
+  // a compile takes a frame or more, which no HDR playback start should pay; a display
+  // without HDR compiles at its first use, and a running composite keeps its programs
+  if (IsHDRDisplay() && !m_guiCompositing)
+    CompileGuiComposite(m_RenderVersionMajor >= 3 && IsExtSupported("GL_OES_texture_3D")
+                            ? CGuiCompositeShaderGLES::Input::LUT3D
+                            : CGuiCompositeShaderGLES::Input::LUT,
+                        UseLimitedColor());
+}
+
+bool CWinSystemAmlogicGLESContext::CompileGuiComposite(CGuiCompositeShaderGLES::Input input,
+                                                       bool limited)
+{
+  if (m_compositeShader && m_compositeShader->GetInput() == input &&
+      m_guiCompositeLimited == limited)
+    return true;
+
+  std::string defines;
+  if (limited)
+    defines += "#define KODI_LIMITED_RANGE 1\n";
+  auto shader = std::make_unique<CGuiCompositeShaderGLES>(defines, input);
+  if (!shader->CompileAndLink())
+  {
+    CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
+    return false;
+  }
+  m_compositeShader = std::move(shader);
+  m_guiCompositeLimited = limited;
+  return true;
 }
 
 bool CWinSystemAmlogicGLESContext::BuildGuiComposite(CGuiCompositeShaderGLES::Input input,
@@ -388,21 +433,8 @@ bool CWinSystemAmlogicGLESContext::BuildGuiComposite(CGuiCompositeShaderGLES::In
                                                      float peak)
 {
   const bool limited = UseLimitedColor();
-  if (!m_compositeShader || m_compositeShader->GetInput() != input ||
-      m_guiCompositeLimited != limited)
-  {
-    std::string defines;
-    if (limited)
-      defines += "#define KODI_LIMITED_RANGE 1\n";
-    auto shader = std::make_unique<CGuiCompositeShaderGLES>(defines, input);
-    if (!shader->CompileAndLink())
-    {
-      CLog::Log(LOGERROR, "CWinSystemAmlogicGLESContext: failed to compile GUI composite shader");
-      return false;
-    }
-    m_compositeShader = std::move(shader);
-    m_guiCompositeLimited = limited;
-  }
+  if (!CompileGuiComposite(input, limited))
+    return false;
 
   m_compositeShader->SetSdrPeak(peak);
   m_compositeShader->SetLimitedRange(limited);
