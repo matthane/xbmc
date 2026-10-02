@@ -1466,8 +1466,10 @@ bool CGUIWindowManager::Render()
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiVisualizeDirtyRegions;
   if (visualizeDirtyRegions)
     bufferAge = 20;
+  // a mark holds both the old and the new rect, so a known age needs no extra render
+  const bool knownAge = CServiceBroker::GetWinSystem()->CanRedrawPartially();
   if (bufferAge)
-    m_tracker.CleanMarkedRegions(bufferAge + 1);
+    m_tracker.CleanMarkedRegions(knownAge ? bufferAge : bufferAge + 1);
   else
     m_tracker.CleanMarkedRegions(10);
 
