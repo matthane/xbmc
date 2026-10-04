@@ -377,7 +377,7 @@ CBitstreamConverter::CBitstreamConverter()
   m_to_annexb = false;
   m_convert_3byteTo4byteNALSize = false;
   m_convert_bytestream = false;
-  m_sps_pps_context.sps_pps_data = NULL;
+  m_sps_pps_context = {};
   m_start_decode = true;
   m_convert_dovi = false;
   m_removeDovi = false;
@@ -697,6 +697,27 @@ bool CBitstreamConverter::Convert(uint8_t* pData, int iSize)
 
             m_convertSize = offset;
             m_combine = true;
+          }
+          else if (m_codec == AV_CODEC_ID_HEVC)
+          {
+            // annex-b input is split into length prefixed units for the same nal rules as hvcC
+            uint8_t* nalBuf = nullptr;
+            int nalSize = iSize;
+            bool converted = false;
+
+            m_sps_pps_context.length_size = 4;
+            if (avc_parse_nal_units_buf(pData, &nalBuf, &nalSize) == 0)
+              converted = BitstreamConvert(nalBuf, nalSize, &m_convertBuffer, &m_convertSize);
+            av_free(nalBuf);
+
+            // a packet left with no nalus is dropped, as on the hvcC path
+            if (converted)
+            {
+              m_combine = true;
+              return m_convertSize > 0;
+            }
+            m_inputSize = iSize;
+            m_inputBuffer = pData;
           }
           else
           {
