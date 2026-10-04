@@ -1409,9 +1409,13 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
         if (!m_Hdr10PlusTested && !m_removeHdr10Plus && !m_IsHdr10Plus)
           m_IsHdr10Plus = CHevcSei::ContainsHdr10Plus(buf, nal_size);
 
+        std::optional<std::vector<uint8_t>> withoutHdr10Plus;
         if (m_removeHdr10Plus)
+          withoutHdr10Plus = CHevcSei::RemoveHdr10PlusFromSeiNalu(buf, nal_size);
+
+        if (withoutHdr10Plus)
         {
-          finalPrefixSeiNalu = CHevcSei::RemoveHdr10PlusFromSeiNalu(buf, nal_size);
+          finalPrefixSeiNalu = std::move(*withoutHdr10Plus);
 
           if (!finalPrefixSeiNalu.empty())
           {
