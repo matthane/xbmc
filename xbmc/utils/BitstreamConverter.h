@@ -153,6 +153,7 @@ protected:
 
 #ifdef HAVE_LIBDOVI
   const DoviData* processDoviRpu(uint8_t* buf, uint32_t nalSize);
+  void TestDoviEL(uint8_t* data, int size);
 #endif
 
   typedef struct omx_bitstream_ctx {
@@ -185,6 +186,7 @@ protected:
   bool m_setDoviZeroLevel5;
   bool m_doviIsFEL{false};
   bool m_doviELTested{false};
+  bool m_doviELUnused{false};
   bool m_IsHdr10Plus{false};
   bool m_Hdr10PlusTested{false};
 };

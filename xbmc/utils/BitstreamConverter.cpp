@@ -1355,6 +1355,11 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
 
   std::vector<uint8_t> finalPrefixSeiNalu;
 
+#ifdef HAVE_LIBDOVI
+  if (m_codec == AV_CODEC_ID_HEVC && !m_doviELTested)
+    TestDoviEL(pData, iSize);
+#endif
+
   switch (m_codec)
   {
     case AV_CODEC_ID_H264:
@@ -1464,7 +1469,7 @@ bool CBitstreamConverter::BitstreamConvert(uint8_t* pData,
           }
 #endif
         }
-        else if (m_convert_dovi && unit_type == HEVC_NAL_UNSPEC63)
+        else if ((m_convert_dovi || m_doviELUnused) && unit_type == HEVC_NAL_UNSPEC63)
         {
           // Ignore the enhancement layer, may or may not help
           write_buf = false;
@@ -2146,8 +2151,37 @@ bool CBitstreamConverter::h264_sequence_header(const uint8_t *data, const uint32
 }
 
 #ifdef HAVE_LIBDOVI
+// the EL units of an access unit precede its rpu, so the first rpu is read ahead
+void CBitstreamConverter::TestDoviEL(uint8_t* data, int size)
+{
+  const int lengthSize = m_sps_pps_context.length_size;
+  int pos = 0;
+
+  while (size - pos > lengthSize)
+  {
+    uint32_t nalSize = 0;
+    for (int i = 0; i < lengthSize; i++)
+      nalSize = (nalSize << 8) | data[pos + i];
+    pos += lengthSize;
+    if (nalSize == 0 || nalSize > static_cast<uint32_t>(size - pos))
+      break;
+
+    if (((data[pos] >> 1) & 0x3f) == HEVC_NAL_UNSPEC62)
+    {
+      const DoviData* rpuData = processDoviRpu(data + pos, nalSize);
+      if (rpuData)
+        dovi_data_free(rpuData);
+      break;
+    }
+    pos += nalSize;
+  }
+  m_doviELTested = true;
+}
+
 // Processes Dolby Vision RPU
 //   - Sets `m_doviIsFEL` flag to true when DV is profile 7 / FEL
+//   - Sets `m_doviELUnused` when the RPU profile has no EL, whose units would
+//     still make the decoder report a dual layer
 //   - Converts to profile 8.1 if `m_convert_dovi` is enabled
 //   - Sets level 5 metadata to 0 offsets if `m_setDoviZeroLevel5` is enabled
 //
@@ -2179,6 +2213,7 @@ const DoviData* CBitstreamConverter::processDoviRpu(uint8_t* buf, uint32_t nalSi
       if (StringUtils::EqualsNoCase(header->el_type, "FEL"))
         m_doviIsFEL = true;
     }
+    m_doviELUnused = header->guessed_profile != 4 && header->guessed_profile != 7;
     m_doviELTested = true;
   }
 
