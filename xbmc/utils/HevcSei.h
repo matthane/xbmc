@@ -53,10 +53,11 @@ public:
   static bool ContainsHdr10Plus(
       const uint8_t* inData, const size_t inDataLen);
 
-  // Returns a vector of bytes:
+  // Returns no value if the NALU SEI payload contains no HDR10+ SEI message, else a
+  // vector of bytes:
   //      When not empty: the new NALU containing all but the HDR10+ SEI message.
   //      Otherwise: the NALU contained only one HDR10+ SEI and can be discarded.
-  static std::vector<uint8_t> RemoveHdr10PlusFromSeiNalu(
+  static std::optional<std::vector<uint8_t>> RemoveHdr10PlusFromSeiNalu(
       const uint8_t* inData, const size_t inDataLen);
 
 private:

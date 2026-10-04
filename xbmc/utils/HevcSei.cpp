@@ -168,12 +168,12 @@ bool CHevcSei::ContainsHdr10Plus(const uint8_t* inData, const size_t inDataLen)
   return CHevcSei::FindHdr10Plus(inData, inDataLen).has_value();
 }
 
-std::vector<uint8_t> CHevcSei::RemoveHdr10PlusFromSeiNalu(
+std::optional<std::vector<uint8_t>> CHevcSei::RemoveHdr10PlusFromSeiNalu(
     const uint8_t* inData, const size_t inDataLen)
 {
   auto res = CHevcSei::FindHdr10Plus(inData, inDataLen);
   if (!res)
-    return {};
+    return std::nullopt;
 
   auto& [buf, messages, msg] = *res;
 
