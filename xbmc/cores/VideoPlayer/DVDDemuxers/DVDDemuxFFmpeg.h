@@ -9,6 +9,7 @@
 #pragma once
 
 #include "DVDDemux.h"
+#include "DemuxDualLayer.h"
 #include "DemuxStreamSSIF.h"
 #include "threads/CriticalSection.h"
 #include "threads/SystemClock.h"
@@ -140,6 +141,9 @@ protected:
   void ResetVideoStreams();
   AVDictionary* GetFFMpegOptionsFromInput();
   double ConvertTimestamp(int64_t pts, int den, int num);
+#ifdef HAVE_LIBBLURAY
+  void ConvertBlurayTimestamps(DemuxPacket* packet, const AVStream* stream);
+#endif
   bool IsProgramChange();
   unsigned int HLSSelectProgram();
 
@@ -162,6 +166,7 @@ protected:
   bool     m_bAVI;
   bool     m_bSup;
   CDemuxStreamSSIF* m_pSSIF;
+  CDemuxDualLayer m_dualLayer;
   int      m_speed;
   unsigned int m_program;
   unsigned int m_streamsInProgram;
@@ -202,4 +207,8 @@ protected:
   bool m_seekToKeyFrame = false;
   double m_startTime = 0;
   std::vector<ChapterFFmpeg> m_chapters;
+#ifdef HAVE_LIBBLURAY
+  uint64_t m_blurayReadBase{0};
+  std::map<int, uint64_t> m_blurayReadPos;
+#endif
 };
