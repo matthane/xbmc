@@ -7,8 +7,10 @@ set(HEADERS WinSystemAmlogic.h
             AMLDisplay.h)
 
 if(TARGET ${APP_NAME_LC}::OpenGLES)
-  list(APPEND SOURCES WinSystemAmlogicGLESContext.cpp)
-  list(APPEND HEADERS WinSystemAmlogicGLESContext.h)
+  list(APPEND SOURCES ScreenshotSurfaceAML.cpp
+                      WinSystemAmlogicGLESContext.cpp)
+  list(APPEND HEADERS ScreenshotSurfaceAML.h
+                      WinSystemAmlogicGLESContext.h)
 endif()
 
 core_add_library(windowing_Amlogic)

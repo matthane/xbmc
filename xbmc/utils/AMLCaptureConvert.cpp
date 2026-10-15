@@ -397,6 +397,23 @@ void ConvertPixel(const float ycc[3],
     out[c] = std::clamp(v[c], 0.0f, 1.0f);
 }
 
+// the exact inverse of the HDR coding of ConvertPixel and of the GUI shader
+void MapPixelToSdr(const float in[3],
+                   const AMLCaptureCoding& coding,
+                   const Tables& tables,
+                   float out[3])
+{
+  float v[3] = {in[0], in[1], in[2]};
+  HdrToLinear(coding.transfer == AMLCaptureCoding::Transfer::HLG ? Light::HLG : Light::PQ, tables,
+              v);
+  for (int c = 0; c < 3; c++)
+    v[c] = static_cast<float>(static_cast<double>(v[c]) * PQ_PEAK_NITS /
+                              static_cast<double>(coding.whiteNits));
+  Apply(BT2020_TO_BT709, v, out);
+  for (int c = 0; c < 3; c++)
+    out[c] = std::clamp(LookupRoot(tables.linearToSrgb, out[c]), 0.0f, 1.0f);
+}
+
 uint8_t To8(float v)
 {
   return static_cast<uint8_t>(std::lround(v * 255));
@@ -499,4 +516,39 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
     }
   }
   return true;
+}
+
+void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
+                                  const AMLCaptureCoding& coding,
+                                  const AMLCaptureImage& dst)
+{
+  const Tables& tables = GetTables();
+  for (int y = 0; y < src.height; y++)
+  {
+    const uint16_t* in = reinterpret_cast<const uint16_t*>(
+        src.data[0] + static_cast<std::ptrdiff_t>(y) * src.linesize[0]);
+    uint8_t* out = dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0];
+    for (int x = 0; x < src.width; x++, in += 4, out += 4)
+    {
+      const float coded[3] = {in[0] / 65535.0f, in[1] / 65535.0f, in[2] / 65535.0f};
+      float rgb[3];
+      MapPixelToSdr(coded, coding, tables, rgb);
+      for (int c = 0; c < 3; c++)
+        out[c] = To8(rgb[c]);
+      out[3] = 255;
+    }
+  }
+}
+
+AMLCaptureImage CAMLCaptureConvert::GetCompositeImage(int width, int height)
+{
+  m_composite.resize(static_cast<std::size_t>(width) * height * 4);
+
+  AMLCaptureImage image;
+  image.format = AV_PIX_FMT_RGBA64LE;
+  image.width = width;
+  image.height = height;
+  image.data[0] = reinterpret_cast<uint8_t*>(m_composite.data());
+  image.linesize[0] = width * 8;
+  return image;
 }
