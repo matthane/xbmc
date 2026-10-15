@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 
+class CAMLCapture;
 class CAMLCodec;
 struct AMLFrameMetadata;
 
@@ -41,6 +42,8 @@ public:
 
   // Player functions
   virtual bool IsGuiLayer() override { return false; };
+  virtual bool CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                                 KODI::RENDERING::CAPTURE::CaptureResult& result) override;
   virtual bool StartVsyncPresent() override;
   virtual void StopVsyncPresent() override;
   virtual bool WaitVsync() override;
@@ -79,4 +82,6 @@ private:
   //! Frame last released to amvideo, whose metadata goes out when the frame is shown
   uint32_t m_releasedToken{0};
   std::shared_ptr<const AMLFrameMetadata> m_releasedMeta;
+  std::shared_ptr<CAMLCapture> m_capture;
+  CRect m_captureRect;
 };

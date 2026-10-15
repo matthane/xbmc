@@ -10,6 +10,7 @@
 #include "ServiceBroker.h"
 #include "cores/VideoPlayer/VideoRenderers/VideoShaders/ToneMappers.h"
 #include "jobs/JobManager.h"
+#include "rendering/capture/CapturePixels.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/amlogic/WinSystemAmlogic.h"
@@ -33,6 +34,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+using namespace KODI::RENDERING::CAPTURE;
+
 namespace
 {
 
@@ -45,6 +48,8 @@ constexpr int MAX_CAPTURE_WIDTH = 1920;
 constexpr int MAX_CAPTURE_HEIGHT = 1080;
 // vdin strides each line to 64 pixels but sizes the buffer from the width
 constexpr int CAPTURE_WIDTH_ALIGN = 64;
+// the vdin scalers cannot shrink by 32 or more
+constexpr int MAX_CAPTURE_SHRINK = 32;
 // DV player-led, dv2hdr and sdr2hdr frames are already display-mapped
 constexpr float MAPPED_PEAK_NITS = 1000.0f;
 // the grade of a Dolby Vision TV-led signal when the stream carries no mastering metadata
@@ -142,6 +147,90 @@ float GetLuminance(const AMLCaptureSource& source)
   return CToneMappers::GetLuminanceValue(source.hasDisplayMetadata, source.displayMetadata,
                                          source.hasLightMetadata, source.lightMetadata);
 }
+
+// the stream size that holds width x height pixels in the normalized crop
+void GetStreamSize(const CRect& crop, int width, int height, int& streamWidth, int& streamHeight)
+{
+  CAMLCapture::GetCaptureSize(streamWidth, streamHeight);
+  if (crop.IsEmpty())
+    return;
+
+  const RESOLUTION_INFO screen = CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo();
+
+  // a size within one alignment step of the capture is the capture, so full-size requests that
+  // differ by rounding share the stream
+  const auto size = [](int pixels, float part, int align, int output, int limit)
+  {
+    const int needed =
+        std::max(static_cast<int>(std::ceil(pixels / part)), output / MAX_CAPTURE_SHRINK + 1);
+    const int aligned = (needed + align - 1) / align * align;
+    return aligned >= limit - align ? limit : aligned;
+  };
+  streamWidth = size(width, crop.Width(), CAPTURE_WIDTH_ALIGN, screen.iScreenWidth, streamWidth);
+  streamHeight = size(height, crop.Height(), 2, screen.iScreenHeight, streamHeight);
+}
+
+class CAMLVideoPixels : public ICapturePixels
+{
+public:
+  CAMLVideoPixels(std::weak_ptr<CAMLCapture> session,
+                  std::shared_ptr<void> lease,
+                  const AMLCaptureVideoSpec& spec,
+                  int streamWidth,
+                  int streamHeight)
+    : m_session(std::move(session)),
+      m_lease(std::move(lease)),
+      m_spec(spec),
+      m_streamWidth(streamWidth),
+      m_streamHeight(streamHeight)
+  {
+  }
+
+  const uint8_t* Lock() override
+  {
+    std::lock_guard lock(m_lock);
+
+    // per-frame buffers stay immutable: every Lock returns the first read
+    if (m_read)
+      return m_buffer.get();
+    m_read = true;
+
+    const auto session = m_session.lock();
+    if (!session)
+      return nullptr;
+
+    auto buffer =
+        std::make_unique<uint8_t[]>(static_cast<size_t>(m_spec.width) * m_spec.height * 4);
+    AMLCaptureImage dst;
+    dst.format = AV_PIX_FMT_BGRA;
+    dst.width = m_spec.width;
+    dst.height = m_spec.height;
+    dst.data[0] = buffer.get();
+    dst.linesize[0] = m_spec.width * 4;
+
+    const bool ok =
+        session->Read(m_streamWidth, m_streamHeight,
+                      [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                      {
+                        return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
+                                               frame.color, AMLCaptureCoding(), dst);
+                      });
+
+    if (ok)
+      m_buffer = std::move(buffer);
+    return m_buffer.get();
+  }
+
+private:
+  std::weak_ptr<CAMLCapture> m_session;
+  std::shared_ptr<void> m_lease;
+  AMLCaptureVideoSpec m_spec;
+  int m_streamWidth{0};
+  int m_streamHeight{0};
+  std::mutex m_lock;
+  bool m_read{false};
+  std::unique_ptr<uint8_t[]> m_buffer;
+};
 
 std::mutex s_sessionLock;
 std::weak_ptr<CAMLCapture> s_session;
@@ -465,6 +554,28 @@ void CAMLCapture::SetPresented()
   m_presented = true;
 }
 
+void CAMLCapture::SetVideoRect(const CRect& rect)
+{
+  std::lock_guard lock(m_lock);
+
+  m_videoRect = rect;
+}
+
+CRect CAMLCapture::GetVisibleRect()
+{
+  // the codec places the video at the GUI rect scaled to the output, so the GUI size normalizes it
+  const CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  const RESOLUTION_INFO gui = context.GetResInfo(context.GetVideoResolution());
+  if (gui.iWidth <= 0 || gui.iHeight <= 0)
+    return {};
+
+  std::lock_guard lock(m_lock);
+
+  CRect rect(m_videoRect.x1 / gui.iWidth, m_videoRect.y1 / gui.iHeight, m_videoRect.x2 / gui.iWidth,
+             m_videoRect.y2 / gui.iHeight);
+  return rect.Intersect(CRect(0.0f, 0.0f, 1.0f, 1.0f));
+}
+
 std::shared_ptr<CAMLCapture::CStream> CAMLCapture::TakeStream()
 {
   if (m_stream)
@@ -701,4 +812,33 @@ AMLCaptureColor CAMLCapture::GetSignal(const AMLCaptureSource& source) const
       break;
   }
   return color;
+}
+
+AMLCaptureImage CAMLCapture::Crop(const AMLCaptureImage& image, const CRect& rect)
+{
+  if (rect.IsEmpty())
+    return image;
+
+  const auto edge = [](float v, int size)
+  { return std::clamp(static_cast<int>(std::lround(v * size / 2)) * 2, 0, size); };
+  const int x1 = edge(rect.x1, image.width);
+  const int x2 = edge(rect.x2, image.width);
+  const int y1 = edge(rect.y1, image.height);
+  const int y2 = edge(rect.y2, image.height);
+
+  AMLCaptureImage crop = image;
+  crop.width = x2 - x1;
+  crop.height = y2 - y1;
+  crop.data[0] += y1 * image.linesize[0] + x1;
+  crop.data[1] += y1 / 2 * image.linesize[1] + x1;
+  return crop;
+}
+
+std::shared_ptr<ICapturePixels> CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec)
+{
+  int width = 0;
+  int height = 0;
+  GetStreamSize(spec.rect, spec.width, spec.height, width, height);
+  auto lease = spec.continuous ? Lease(width, height) : Lease();
+  return std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
 }

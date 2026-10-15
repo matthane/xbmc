@@ -9,6 +9,7 @@
 
 #include "guilib/DispResource.h"
 #include "utils/AMLCaptureConvert.h"
+#include "utils/Geometry.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -22,6 +23,17 @@ extern "C"
 {
 #include <libavutil/mastering_display_metadata.h>
 }
+
+namespace KODI
+{
+namespace RENDERING
+{
+namespace CAPTURE
+{
+class ICapturePixels;
+}
+} // namespace RENDERING
+} // namespace KODI
 
 //! What the renderer knows about the playing video
 struct AMLCaptureSource
@@ -39,6 +51,15 @@ struct AMLCaptureFrame
 {
   AMLCaptureImage image;
   AMLCaptureColor color;
+};
+
+struct AMLCaptureVideoSpec
+{
+  int width{0};
+  int height{0};
+  //! the visible video, normalized to the output; vdin1 holds it at the frame origin
+  CRect rect;
+  bool continuous{false};
 };
 
 //! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
@@ -68,6 +89,10 @@ public:
   void Configure(const AMLCaptureSource& source);
   void SetPresented();
   bool IsPresented() const { return m_presented; }
+  //! Render thread: the video destination in GUI coordinates
+  void SetVideoRect(const CRect& rect);
+  //! Render thread: the video destination on screen, normalized to the output
+  CRect GetVisibleRect();
 
   //! Keeps the stream running until the last lease is released. A continuous consumer passes
   //! the stream size it reads at, which the stream keeps while the lease lasts.
@@ -77,6 +102,13 @@ public:
   //! continuous size when larger, and run `use` on it. A size change restarts the stream. A wait
   //! ends after a bound of output frame periods.
   bool Read(int width, int height, const ReadFunc& use);
+
+  //! The crop of an NV12 image to a normalized rect, on even pixels for the chroma plane
+  static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
+
+  //! Deferred BGRA pixels of the visible video, SDR BT.709 full range.
+  std::shared_ptr<KODI::RENDERING::CAPTURE::ICapturePixels> CreateVideoPixels(
+      const AMLCaptureVideoSpec& spec);
 
 private:
   class CStream;
@@ -98,6 +130,7 @@ private:
   //! another vdin1 user holds the node: no reopen before the next Configure
   bool m_busy{false};
   AMLCaptureSource m_source;
+  CRect m_videoRect;
   std::atomic<bool> m_presented{false};
 
   //! serializes consumers; held across the frame wait, never taken by Stop
