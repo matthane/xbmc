@@ -13,13 +13,18 @@
 #include "cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFlags.h"
+#include "rendering/capture/CapturePixels.h"
+#include "rendering/capture/CaptureTypes.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/MediaSettings.h"
+#include "utils/AMLCapture.h"
 #include "utils/AMLUtils.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 #include "windowing/amlogic/WinSystemAmlogic.h"
+
+#include <algorithm>
 
 CRendererAML::CRendererAML()
  : m_prevVPts(DVD_NOPTS_VALUE)
@@ -30,6 +35,8 @@ CRendererAML::CRendererAML()
 
 CRendererAML::~CRendererAML()
 {
+  if (m_capture)
+    m_capture->ClearPresented();
   Reset();
   static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
       ->ReleaseHdrGuiSession(m_hdrGuiOwner);
@@ -130,8 +137,63 @@ bool CRendererAML::Configure(const VideoPicture &picture, float fps, unsigned in
     winSystem->ReleaseHdrGuiSession(m_hdrGuiOwner);
     m_hdrGuiOwner = 0;
   }
+
+  if (!m_capture)
+    m_capture = CAMLCapture::Get();
+  AMLCaptureSource source;
+  source.dolbyVision = picture.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION;
+  source.transfer = picture.color_transfer;
+  source.hasDisplayMetadata = picture.hasDisplayMetadata;
+  source.displayMetadata = picture.displayMetadata;
+  source.hasLightMetadata = picture.hasLightMetadata;
+  source.lightMetadata = picture.lightMetadata;
+  m_capture->Configure(source);
+
   m_bConfigured = true;
 
+  return true;
+}
+
+bool CRendererAML::CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                                     KODI::RENDERING::CAPTURE::CaptureResult& result)
+{
+  using namespace KODI::RENDERING::CAPTURE;
+
+  const CRect visible =
+      m_capture && m_capture->IsPresented() ? m_capture->GetVisibleRect() : CRect();
+  if (visible.IsEmpty())
+  {
+    if (spec.cadence != CaptureCadence::CONTINUOUS)
+      return false;
+
+    // no picture yet: an empty delivery keeps a continuous capture alive (a callback
+    // would read it as a failure; RenderCapture has none)
+    result.pixels = std::make_shared<CHeapCapturePixels>(nullptr);
+    result.content = CaptureContent::VIDEO;
+    return true;
+  }
+
+  int captureWidth = 0;
+  int captureHeight = 0;
+  CAMLCapture::GetCaptureSize(captureWidth, captureHeight);
+
+  AMLCaptureVideoSpec video;
+  video.rect = CRect(0.0f, 0.0f, visible.Width(), visible.Height());
+  video.continuous = spec.cadence == CaptureCadence::CONTINUOUS;
+  video.width = spec.width ? static_cast<int>(spec.width)
+                           : std::max(2, static_cast<int>(video.rect.Width() * captureWidth));
+  video.height = spec.height ? static_cast<int>(spec.height)
+                             : std::max(2, static_cast<int>(video.rect.Height() * captureHeight));
+
+  result.pixels = m_capture->CreateVideoPixels(video);
+  result.width = static_cast<unsigned int>(video.width);
+  result.height = static_cast<unsigned int>(video.height);
+  result.stride = video.width * 4;
+  result.format = AV_PIX_FMT_BGRA;
+  result.content = CaptureContent::VIDEO;
+  result.color.primaries = AVCOL_PRI_BT709;
+  result.color.transfer = AVCOL_TRC_BT709;
+  result.color.range = AVCOL_RANGE_JPEG;
   return true;
 }
 
@@ -251,6 +313,8 @@ std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect
       {
         m_releasedToken = amli->m_metadataToken;
         m_releasedMeta = amli->m_metadata;
+        if (m_capture)
+          m_capture->SetPresented();
       }
       if (setVideoRect)
         amli->m_amlCodec->SetVideoRect(m_sourceRect, m_destRect);
@@ -266,6 +330,12 @@ std::shared_ptr<CAMLCodec> CRendererAML::QueueFrame(int index, bool setVideoRect
 void CRendererAML::RenderUpdate(int index, int index2, bool clear, unsigned int flags, unsigned int alpha)
 {
   ManageRenderArea();
+
+  if (m_capture && m_destRect != m_captureRect)
+  {
+    m_capture->SetVideoRect(m_destRect);
+    m_captureRect = m_destRect;
+  }
 
   if (m_vsyncPresent)
   {
