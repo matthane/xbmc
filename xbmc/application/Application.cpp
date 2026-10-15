@@ -871,8 +871,7 @@ void ServiceCaptureTaps()
   }
 
   CaptureResult result;
-  result.pixels =
-      std::make_shared<CHeapCapturePixels>(std::unique_ptr<uint8_t[]>(surface->TakeBuffer()));
+  result.pixels = surface->TakePixels();
   result.width = static_cast<unsigned int>(surface->GetWidth());
   result.height = static_cast<unsigned int>(surface->GetHeight());
   result.stride = surface->GetStride();
