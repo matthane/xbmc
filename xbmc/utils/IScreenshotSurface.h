@@ -8,6 +8,11 @@
 
 #pragma once
 
+#include "rendering/capture/CapturePixels.h"
+
+#include <cstdint>
+#include <memory>
+
 extern "C"
 {
 #include <libavutil/pixfmt.h>
@@ -46,6 +51,14 @@ public:
     unsigned char* buffer = m_buffer;
     m_buffer = nullptr;
     return buffer;
+  }
+
+  //! \brief Hand the pixels to the caller; a surface may defer the read to Lock() and change
+  //! the format and stride it reports.
+  virtual std::shared_ptr<KODI::RENDERING::CAPTURE::ICapturePixels> TakePixels()
+  {
+    return std::make_shared<KODI::RENDERING::CAPTURE::CHeapCapturePixels>(
+        std::unique_ptr<uint8_t[]>(TakeBuffer()));
   }
 
 protected:
