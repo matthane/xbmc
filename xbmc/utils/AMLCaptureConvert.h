@@ -77,12 +77,22 @@ public:
                const AMLCaptureCoding& coding,
                const AMLCaptureImage& dst);
 
+  //! Map src, an AV_PIX_FMT_RGBA64LE image in an HDR coding, to SDR AV_PIX_FMT_RGBA of the same
+  //! size by the inverse of the coding, as the GUI places SDR.
+  void MapToSdr(const AMLCaptureImage& src,
+                const AMLCaptureCoding& coding,
+                const AMLCaptureImage& dst);
+
+  //! An AV_PIX_FMT_RGBA64LE work image of width x height, reused between calls.
+  AMLCaptureImage GetCompositeImage(int width, int height);
+
 private:
   const std::vector<float>& GetToneMap(float luminance);
 
   SwsContext* m_scaleContext{nullptr};
   std::vector<uint8_t> m_source;
   std::vector<uint16_t> m_yuv;
+  std::vector<uint16_t> m_composite;
   std::vector<float> m_toneMap;
   float m_toneMapLuminance{0.0f};
 };
