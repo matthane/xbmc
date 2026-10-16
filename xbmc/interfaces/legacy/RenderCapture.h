@@ -10,6 +10,7 @@
 
 #include "AddonClass.h"
 #include "Exception.h"
+#include "LanguageHook.h"
 #include "ServiceBroker.h"
 #include "application/ApplicationComponents.h"
 #include "application/ApplicationPlayer.h"
@@ -194,6 +195,7 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
+        DelayedCallGuard dg(languageHook);
         if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
           return false;
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
