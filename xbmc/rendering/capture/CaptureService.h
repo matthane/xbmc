@@ -33,9 +33,10 @@ class CCaptureHandle;
  exactly ONE consumer is serviced per render loop, the most recent one (pure
  LIFO). A one-shot submitted just before a continuous can be buried under it
  and waits until the continuous is gone (a rare late/lost screenshot,
- accepted). FrameComplete() fails any request left unserved, so an unservable
- one cannot force frames or hold the stack top forever. Effectively one
- continuous capture at a time.
+ accepted). FrameComplete() fails a one-shot left unserved, so an unservable
+ one cannot force frames or hold the stack top forever; a continuous one
+ stays until cancelled, served or not. Effectively one continuous capture at
+ a time.
 
  Threading contract:
  - Submit()/Cancel(): any thread; they never touch the graphics context.
@@ -83,9 +84,10 @@ public:
   //! readback): those are fixed properties, so retrying cannot help.
   void Fail(const std::shared_ptr<CaptureRequest>& request);
 
-  //! Render thread: the frame is drawn and every tap has run. A request still
-  //! latched and unserved is failed, whatever its cadence: a whole frame went
-  //! by without any tap serving it, so none will in this configuration. Call
+  //! Render thread: the frame is drawn and every tap has run. A one-shot still
+  //! latched and unserved is failed: a whole frame went by without any tap
+  //! serving it, so none will in this configuration. A CONTINUOUS request
+  //! survives, since video can come and go under it (between files). Call
   //! this only on a frame that really drew, otherwise an idle GUI would fail
   //! requests that are working.
   void FrameComplete();
