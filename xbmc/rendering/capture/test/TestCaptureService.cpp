@@ -442,20 +442,20 @@ TEST_F(TestCaptureService, UnservedOneShotFailsAtFrameEnd)
   EXPECT_FALSE(m_service.LatchFrame()); // and it no longer forces frames
 }
 
-TEST_F(TestCaptureService, UnservedContinuousFailsAtFrameEnd)
+TEST_F(TestCaptureService, UnservedContinuousSurvivesFrameEnd)
 {
   CaptureSpec spec;
   spec.content = CaptureContent::VIDEO;
   spec.cadence = CaptureCadence::CONTINUOUS;
   auto handle = m_service.Submit(spec);
 
-  // a CONTINUOUS request gets the same judgement as a one-shot: without it the
-  // request would be re-latched every frame forever, starving everything below
+  // a frame with no video (between files) leaves a continuous capture waiting
   m_service.LatchFrame();
   m_service.FrameComplete();
 
-  EXPECT_EQ(handle->GetState(), CaptureState::FAILED);
-  EXPECT_TRUE(m_service.TakeActive(CaptureContent::VIDEO).empty());
+  EXPECT_NE(handle->GetState(), CaptureState::FAILED);
+  m_service.LatchFrame();
+  EXPECT_EQ(m_service.TakeActive(CaptureContent::VIDEO).size(), 1u);
 }
 
 TEST_F(TestCaptureService, ServedContinuousSurvivesFrameEnd)
