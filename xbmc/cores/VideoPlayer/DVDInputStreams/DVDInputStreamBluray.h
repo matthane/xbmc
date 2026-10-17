@@ -178,6 +178,7 @@ public:
   //! hand the clip start held at a join to the demuxer opened after it
   void ReleaseClipStart() { m_clipStartHeld = false; }
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
+  bool IsTitleEnded() const { return m_endedTitleTime > 0; }
 
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
@@ -326,6 +327,7 @@ protected:
     uint64_t m_readPos{0};
     std::vector<ClipSpan> m_clipSpans;
     bool m_hasMVCExtension{false};
+    int m_endedTitleTime{0};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};
