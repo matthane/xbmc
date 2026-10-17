@@ -420,6 +420,7 @@ protected:
   void Prepare();
   bool ShouldDeferSync(bool ready, std::chrono::steady_clock::time_point now);
   bool ShouldWaitForSync(std::chrono::steady_clock::time_point now);
+  bool IsBlurayTitleEnded() const;
   bool OpenStream(CCurrentStream& current, int64_t demuxerId, int iStream, int source, bool reset = true);
   bool OpenAudioStream(CDVDStreamInfo& hint, bool reset = true);
   bool OpenVideoStream(CDVDStreamInfo& hint, bool reset = true);

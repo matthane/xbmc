@@ -2330,6 +2330,16 @@ bool CVideoPlayer::ShouldWaitForSync(std::chrono::steady_clock::time_point now)
   return true;
 }
 
+bool CVideoPlayer::IsBlurayTitleEnded() const
+{
+#if defined(HAVE_LIBBLURAY)
+  return m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) &&
+         std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream)->IsTitleEnded();
+#else
+  return false;
+#endif
+}
+
 void CVideoPlayer::HandlePlaySpeed()
 {
   const bool isInMenu = IsInMenuInternal();
@@ -6149,6 +6159,10 @@ void CVideoPlayer::UpdatePlayState(double timeout)
     state.canseek = true;
     state.canpause = true;
   }
+
+  // the ended title keeps its duration for pause, a seek would act on the next title
+  if (IsBlurayTitleEnded())
+    state.canseek = false;
 
   m_processInfo->SetPlayTimes(state.startTime, state.time, state.timeMin, state.timeMax);
 
