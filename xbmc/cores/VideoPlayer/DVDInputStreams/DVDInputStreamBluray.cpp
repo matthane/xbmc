@@ -746,7 +746,10 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
       m_clipStart.clear();
     return result;
   }
-  m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
+  // the packets a held demuxer plays out keep the time of the item they came from
+  const int dispTimeHeld = m_dispTimeBeforeRead;
+  if (!m_navmode || m_hold != HOLD_HELD)
+    m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
   if(m_navmode)
   {
     do {
@@ -776,6 +779,9 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
           if(m_hold != HOLD_DATA)
           {
             m_hold = HOLD_HELD;
+            // a hold without data keeps the time the demuxer being closed already has
+            if (result == 0)
+              m_dispTimeBeforeRead = dispTimeHeld;
             // the read starts the new play item, which the demuxer being closed must not consume
             if (m_event.event == BD_EVENT_PLAYITEM && result > 0 && !m_hasMVCExtension)
             {
