@@ -982,6 +982,10 @@ bool CVideoPlayer::OpenInputStream()
     } // end loop over all subtitle files
   }
 
+  const auto menus = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream);
+  m_VideoPlayerVideo->SetNavMode(m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
+                                 menus->GetSupportedMenuType() == MenuType::NATIVE);
+
   m_clock.Reset();
   m_dvd.Clear();
 
