@@ -30,6 +30,7 @@
 #include "utils/IPlatformLog.h"
 #include "utils/logtypes.h"
 
+#include <mutex>
 #include <source_location>
 #include <string>
 #include <vector>
@@ -179,6 +180,7 @@ private:
   std::unique_ptr<IPlatformLog> m_platform;
   std::shared_ptr<spdlog::sinks::dist_sink<std::mutex>> m_sinks;
   Logger m_defaultLogger;
+  std::mutex m_loggerMutex;
 
   std::shared_ptr<spdlog::sinks::sink> m_fileSink;
 
