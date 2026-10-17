@@ -753,6 +753,13 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
   m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
   if(m_navmode)
   {
+    // the running demuxer plays on into the next play item of the title, a discontinuity holds it
+    const auto joinsInLine = [this, &result]
+    {
+      return result > 0 && !m_hasMVCExtension && m_titleInfo && m_clip &&
+             m_event.param < m_titleInfo->clip_count &&
+             m_event.param == static_cast<uint32_t>(m_clip - m_titleInfo->clips) + 1;
+    };
     do {
 
       if (m_hold == HOLD_HELD)
@@ -772,16 +779,21 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
 
       /* Check for holding events */
       switch(m_event.event) {
+        case BD_EVENT_PLAYITEM:
+          if (joinsInLine())
+            break;
+          [[fallthrough]];
         case BD_EVENT_SEEK:
         case BD_EVENT_TITLE:
         case BD_EVENT_ANGLE:
         case BD_EVENT_PLAYLIST:
-        case BD_EVENT_PLAYITEM:
+        case BD_EVENT_DISCONTINUITY:
           if(m_hold != HOLD_DATA)
           {
             m_hold = HOLD_HELD;
             // the read starts the new play item, which the demuxer being closed must not consume
-            if (m_event.event == BD_EVENT_PLAYITEM && result > 0 && !m_hasMVCExtension)
+            if ((m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_DISCONTINUITY) &&
+                result > 0 && !m_hasMVCExtension)
             {
               HoldClipStart(buf, result);
               return 0;
@@ -802,6 +814,7 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
       }
 
       const bool queued = m_event.event != BD_EVENT_NONE && m_hold != HOLD_DATA;
+      bool playItemInLine = m_event.event == BD_EVENT_PLAYITEM && queued;
       if(result > 0)
         m_hold = HOLD_NONE;
 
@@ -812,6 +825,11 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
       {
         switch(m_event.event) {
           case BD_EVENT_PLAYITEM:
+            if (joinsInLine())
+            {
+              playItemInLine = true;
+              break;
+            }
             if(!m_hasMVCExtension)
             {
               m_hold = HOLD_HELD;
@@ -824,7 +842,13 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
           case BD_EVENT_ANGLE:
           case BD_EVENT_PLAYLIST:
           case BD_EVENT_STILL_TIME:
+          case BD_EVENT_DISCONTINUITY:
             m_hold = HOLD_HELD;
+            if (playItemInLine || (m_event.event == BD_EVENT_DISCONTINUITY && !m_hasMVCExtension))
+            {
+              HoldClipStart(buf, result);
+              return 0;
+            }
             return result;
 
           default:
