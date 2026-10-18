@@ -35,6 +35,8 @@ CRendererAML::CRendererAML()
 
 CRendererAML::~CRendererAML()
 {
+  if (m_capture)
+    m_capture->ClearPresented();
   Reset();
   static_cast<CWinSystemAmlogic*>(CServiceBroker::GetWinSystem())
       ->ReleaseHdrGuiSession(m_hdrGuiOwner);

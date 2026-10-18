@@ -88,6 +88,8 @@ public:
 
   void Configure(const AMLCaptureSource& source);
   void SetPresented();
+  //! the renderer releases the session: no video is presented
+  void ClearPresented() { m_presented = false; }
   bool IsPresented() const { return m_presented; }
   //! Render thread: the video destination in GUI coordinates
   void SetVideoRect(const CRect& rect);
