@@ -457,6 +457,7 @@ void CDVDInputStreamBluray::FreeTitleInfo()
 
   m_titleInfo = nullptr;
   m_clip = nullptr;
+  m_endedTitleTime = 0;
   FreeClipInfo();
 }
 
@@ -573,7 +574,12 @@ void CDVDInputStreamBluray::ProcessEvent() {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_END_OF_TITLE {}", m_event.param);
     /* when a title ends, playlist WILL eventually change */
     if (m_navmode)
+    {
+      // the player still plays the title out of its queues until the next stream
+      const int totalTime = GetTotalTime();
       FreeTitleInfo();
+      m_endedTitleTime = totalTime;
+    }
     break;
 
   case BD_EVENT_TITLE:
@@ -740,7 +746,10 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
       m_clipStart.clear();
     return result;
   }
-  m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
+  // the packets a held demuxer plays out keep the time of the item they came from
+  const int dispTimeHeld = m_dispTimeBeforeRead;
+  if (!m_navmode || m_hold != HOLD_HELD)
+    m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
   if(m_navmode)
   {
     do {
@@ -770,6 +779,9 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
           if(m_hold != HOLD_DATA)
           {
             m_hold = HOLD_HELD;
+            // a hold without data keeps the time the demuxer being closed already has
+            if (result == 0)
+              m_dispTimeBeforeRead = dispTimeHeld;
             // the read starts the new play item, which the demuxer being closed must not consume
             if (m_event.event == BD_EVENT_PLAYITEM && result > 0 && !m_hasMVCExtension)
             {
@@ -1130,7 +1142,7 @@ int CDVDInputStreamBluray::GetTotalTime()
   if(m_titleInfo)
     return static_cast<int>(m_titleInfo->duration / 90);
   else
-    return 0;
+    return m_endedTitleTime;
 }
 
 int CDVDInputStreamBluray::GetTime()
@@ -1440,6 +1452,8 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 {
   if(!m_navmode || m_hold == HOLD_EXIT || m_hold == HOLD_ERROR)
     return NEXTSTREAM_NONE;
+
+  m_endedTitleTime = 0;
 
   /* process any current event */
   ProcessEvent();

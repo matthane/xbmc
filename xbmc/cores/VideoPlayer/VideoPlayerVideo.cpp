@@ -324,6 +324,7 @@ void CVideoPlayerVideo::Process()
   bool bRequestDrop = false;
   int iDropDirective;
   bool onlyPrioMsgs = false;
+  bool drainWait = false;
 
   m_vfmt.clear();
   int vfmtCheckCount = 0;
@@ -346,6 +347,13 @@ void CVideoPlayerVideo::Process()
     if (m_paused)
       iPriority = 1;
 
+    if (drainWait)
+    {
+      iPriority = 1;
+      timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::duration<double, std::micro>(frametime));
+    }
+
     if (onlyPrioMsgs)
     {
       iPriority = 1;
@@ -356,6 +364,7 @@ void CVideoPlayerVideo::Process()
     MsgQueueReturnCode ret = GetMessage(pMsg, timeout, iPriority);
 
     onlyPrioMsgs = false;
+    drainWait = false;
 
     if (MSGQ_IS_ERROR(ret))
     {
@@ -539,6 +548,14 @@ void CVideoPlayerVideo::Process()
         m_pVideoCodec->SetCodecControl(DVD_CODEC_CTRL_DRAIN);
         if (!ProcessDecoderOutput(frametime, pts))
           break;
+
+        // the decoder holds frames it cannot output yet, serve messages before retrying
+        if (m_noPicture)
+        {
+          SendMessageBack(pMsg);
+          drainWait = true;
+          break;
+        }
       }
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_PAUSE))
@@ -667,6 +684,7 @@ void CVideoPlayerVideo::UpdatePlayerInfo()
 bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
 {
   CDVDVideoCodec::VCReturn decoderState = m_pVideoCodec->GetPicture(&m_picture);
+  m_noPicture = decoderState == CDVDVideoCodec::VC_NONE;
 
   if (decoderState == CDVDVideoCodec::VC_BUFFER)
   {
