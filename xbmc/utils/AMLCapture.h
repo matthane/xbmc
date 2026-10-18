@@ -11,11 +11,13 @@
 #include "utils/AMLCaptureConvert.h"
 #include "utils/Geometry.h"
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -46,6 +48,13 @@ struct AMLCaptureSource
   AVContentLightMetadata lightMetadata{};
 };
 
+//! The vdin1 loopback inputs: the video layer, and the GUI layer, which is black over video
+enum class AMLCaptureInput
+{
+  VIDEO,
+  GUI,
+};
+
 //! A vdin1 frame, valid only inside CAMLCapture::Read
 struct AMLCaptureFrame
 {
@@ -63,11 +72,12 @@ struct AMLCaptureVideoSpec
 };
 
 //! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
-//! DV and HDR cores, without the GUI.
+//! DV and HDR cores, without the GUI, or the GUI alone while no video is presented.
 //!
-//! The renderer owns the session. The stream starts on the first read and stops when the last
-//! lease ends, on OnLostDisplay and when the renderer drops the session. Only OnLostDisplay and
-//! the destructor make ioctls on the calling thread; everything else runs on the consumer thread.
+//! The renderer or a GUI capture owns the session. The stream starts on the first read and stops
+//! when the last lease of its input ends, on OnLostDisplay and when the session is dropped. Only
+//! OnLostDisplay and the destructor make ioctls on the calling thread; everything else runs on
+//! the consumer thread.
 class CAMLCapture : public IDispResource, public std::enable_shared_from_this<CAMLCapture>
 {
 public:
@@ -98,12 +108,14 @@ public:
 
   //! Keeps the stream running until the last lease is released. A continuous consumer passes
   //! the stream size it reads at, which the stream keeps while the lease lasts.
-  std::shared_ptr<void> Lease(int width = 0, int height = 0);
+  std::shared_ptr<void> Lease(AMLCaptureInput input = AMLCaptureInput::VIDEO,
+                              int width = 0,
+                              int height = 0);
 
-  //! Consumer thread: take the newest frame of a stream of at least width x height, or of the
-  //! continuous size when larger, else wait for the next one, and run `use` on it. A size change
-  //! restarts the stream. A wait ends after a bound of output frame periods.
-  bool Read(int width, int height, const ReadFunc& use);
+  //! Consumer thread: take the newest frame of a stream of input at least width x height, or of
+  //! the input's continuous size when larger, else wait for the next one, and run `use` on it. An
+  //! input or size change restarts the stream. A wait ends after a bound of output frame periods.
+  bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
 
   //! The crop of an NV12 image to a normalized rect, on even pixels for the chroma plane
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
@@ -112,10 +124,17 @@ public:
   std::shared_ptr<KODI::RENDERING::CAPTURE::ICapturePixels> CreateVideoPixels(
       const AMLCaptureVideoSpec& spec);
 
+  //! Render thread: continuous BGRA pixels of the GUI, SDR BT.709 full range, read at each Lock.
+  //! Empty while video is presented or when vdin1 gave no GUI in this output mode.
+  static std::shared_ptr<KODI::RENDERING::CAPTURE::ICapturePixels> CreateGuiPixels(int width,
+                                                                                   int height);
+
 private:
   class CStream;
 
-  void ReleaseLease(int width, int height);
+  void ReleaseLease(AMLCaptureInput input, int width, int height);
+  //! m_lock must be held
+  bool CanRead(AMLCaptureInput input) const;
   //! takes m_stream for Close; m_lock must be held
   std::shared_ptr<CStream> TakeStream();
   void Close(std::shared_ptr<CStream> stream);
@@ -126,11 +145,14 @@ private:
   //! taken streams not closed yet; the node refuses a new input while one is open
   int m_closing{0};
   std::condition_variable m_closed;
-  int m_leases{0};
-  std::vector<std::pair<int, int>> m_continuousSizes;
+  //! per AMLCaptureInput
+  std::array<int, 2> m_leases{};
+  std::vector<std::tuple<AMLCaptureInput, int, int>> m_continuousSizes;
   bool m_displayLost{false};
   //! another vdin1 user holds the node: no reopen before the next Configure
   bool m_busy{false};
+  //! the last GUI open found the node busy; every GUI read retries it
+  bool m_guiBusy{false};
   AMLCaptureSource m_source;
   CRect m_videoRect;
   std::atomic<bool> m_presented{false};
