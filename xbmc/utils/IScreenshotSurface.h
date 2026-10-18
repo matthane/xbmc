@@ -20,6 +20,12 @@ extern "C"
 
 class CWinSystemBase;
 
+namespace KODI::RENDERING::CAPTURE
+{
+struct CaptureResult;
+struct CaptureSpec;
+} // namespace KODI::RENDERING::CAPTURE
+
 //! \brief Subsystem dependencies a capture readback needs, injected so the
 //! surface does not reach for global state.
 struct ScreenshotContext
@@ -36,6 +42,14 @@ public:
   //! \brief Read back the current framebuffer only; the caller guarantees a
   //! fully rendered frame and render-thread context.
   virtual bool Read(const ScreenshotContext& ctx) { return false; }
+
+  //! \brief Render thread: serve a capture without the framebuffer readback, e.g. from a
+  //! display writeback. False leaves it to Read; true with no pixels fails the request.
+  virtual bool CaptureDirect(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                             KODI::RENDERING::CAPTURE::CaptureResult& result)
+  {
+    return false;
+  }
 
   int GetWidth() const { return m_width; }
   int GetHeight() const { return m_height; }
