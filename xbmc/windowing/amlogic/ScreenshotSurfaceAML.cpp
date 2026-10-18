@@ -9,6 +9,7 @@
 
 #include "ServiceBroker.h"
 #include "rendering/capture/CapturePixels.h"
+#include "rendering/capture/CaptureTypes.h"
 #include "utils/AMLCapture.h"
 #include "utils/Screenshot.h"
 #include "windowing/amlogic/WinSystemAmlogicGLESContext.h"
@@ -223,6 +224,34 @@ void CScreenshotSurfaceAML::Register()
 std::unique_ptr<IScreenshotSurface> CScreenshotSurfaceAML::CreateSurface()
 {
   return std::make_unique<CScreenshotSurfaceAML>();
+}
+
+bool CScreenshotSurfaceAML::CaptureDirect(const CaptureSpec& spec, CaptureResult& result)
+{
+  if (spec.content != CaptureContent::COMPOSITE || spec.cadence != CaptureCadence::CONTINUOUS ||
+      spec.format != CaptureFormat::BGRA8 || spec.width == 0 || spec.height == 0)
+    return false;
+
+  const auto session = CAMLCapture::GetActive();
+  if (session && session->IsPresented())
+    return false;
+
+  // without vdin1 the fallback is a full-size readback on every drawn frame, so the request fails
+  result.pixels =
+      CAMLCapture::CreateGuiPixels(static_cast<int>(spec.width), static_cast<int>(spec.height));
+  if (!result.pixels)
+    return true;
+
+  result.width = spec.width;
+  result.height = spec.height;
+  result.stride = static_cast<int>(spec.width) * 4;
+  result.format = AV_PIX_FMT_BGRA;
+  result.color.primaries = AVCOL_PRI_BT709;
+  result.color.transfer = AVCOL_TRC_BT709;
+  result.color.range = AVCOL_RANGE_JPEG;
+  result.content = CaptureContent::COMPOSITE;
+  result.live = true;
+  return true;
 }
 
 std::shared_ptr<ICapturePixels> CScreenshotSurfaceAML::TakePixels()
