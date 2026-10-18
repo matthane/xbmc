@@ -181,6 +181,9 @@ public:
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
   bool IsTitleEndWait() const { return m_titleEndWait; }
 
+  //! whether a menu action made the disc program leave the item being played out, reset by the call
+  bool TakeItemAbandoned();
+
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
   void OverlayCallbackARGB(const struct bd_argb_overlay_s * const);
@@ -330,6 +333,8 @@ protected:
     bool m_hasMVCExtension{false};
     int m_endedTitleTime{0};
     bool m_titleEndWait{false};
+    bool m_menuInput{false};
+    bool m_itemAbandoned{false};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};

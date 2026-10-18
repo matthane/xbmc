@@ -694,9 +694,13 @@ void CDVDInputStreamBluray::ProcessEvent() {
   case BD_EVENT_SECONDARY_VIDEO:
   case BD_EVENT_SECONDARY_VIDEO_SIZE:
   case BD_EVENT_SECONDARY_VIDEO_STREAM:
-  case BD_EVENT_PLAYMARK:
   case BD_EVENT_KEY_INTEREST_TABLE:
   case BD_EVENT_UO_MASK_CHANGED:
+    break;
+
+  case BD_EVENT_PLAYMARK:
+    // a seek the disc program makes at a mark is not the answer to a key
+    m_menuInput = false;
     break;
 
   case BD_EVENT_PLAYLIST_STOP:
@@ -796,6 +800,14 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
         return result;
       }
 
+      // the disc program answers an activation key with its next seek, play item, playlist or title
+      const bool menuJump =
+          m_menuInput && (m_event.event == BD_EVENT_SEEK || m_event.event == BD_EVENT_TITLE ||
+                          m_event.event == BD_EVENT_PLAYLIST ||
+                          (m_event.event == BD_EVENT_PLAYITEM && !joinsInLine()));
+      if (menuJump)
+        m_menuInput = false;
+
       /* Check for holding events */
       switch(m_event.event) {
         case BD_EVENT_PLAYITEM:
@@ -813,6 +825,10 @@ int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
             // a hold without data keeps the time the demuxer being closed already has
             if (result == 0)
               m_dispTimeBeforeRead = dispTimeHeld;
+            // a BD-J play item or seek with no data answers the key and leaves the item unplayed
+            if (result == 0 && menuJump && m_title && m_title->bdj &&
+                (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK))
+              m_itemAbandoned = true;
             // the read starts the new play item, which the demuxer being closed must not consume
             if ((m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_DISCONTINUITY) &&
                 result > 0 && !m_hasMVCExtension)
@@ -1541,8 +1557,17 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
 
   if (titleEndWait)
     m_endedTitleTime = 0;
+  m_menuInput = false;
+  m_itemAbandoned = false;
   m_hold = HOLD_DATA;
   return NEXTSTREAM_OPEN;
+}
+
+bool CDVDInputStreamBluray::TakeItemAbandoned()
+{
+  const bool abandoned = m_itemAbandoned;
+  m_itemAbandoned = false;
+  return abandoned;
 }
 
 void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
@@ -1550,6 +1575,10 @@ void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
   if(m_bd == nullptr || !m_navmode)
     return;
 
+  // only an activation key makes the disc program jump away from the item
+  if (vk == BD_VK_ENTER || vk == BD_VK_POPUP || vk == BD_VK_ROOT_MENU ||
+      (vk >= BD_VK_0 && vk <= BD_VK_9))
+    m_menuInput = true;
   int ret = bd_user_input(m_bd, -1, vk);
   if (ret < 0)
   {
@@ -1603,6 +1632,7 @@ bool CDVDInputStreamBluray::MouseClick(const CPoint &point)
     return false;
   }
 
+  m_menuInput = true;
   if (bd_user_input(m_bd, -1, BD_VK_MOUSE_ACTIVATE) >= 0)
     return true;
 
@@ -1617,6 +1647,8 @@ bool CDVDInputStreamBluray::OnMenu()
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray::OnMenu - navigation mode not enabled");
     return false;
   }
+
+  m_menuInput = true;
 
   // we can not use this event to track a possible popup menu state since bd-j blu-rays can
   // toggle the popup menu on their own without firing this event, and if they do this, our
