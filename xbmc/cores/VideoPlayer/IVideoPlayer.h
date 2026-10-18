@@ -111,6 +111,7 @@ public:
   virtual int  GetDataLevel() const = 0;
   virtual void SetMaxDataSize(int iMaxDataSize) {}
   virtual int GetMaxDataSize() const = 0;
+  virtual void SetNavMode(bool navMode) {}
 };
 
 class CDVDAudioCodec;

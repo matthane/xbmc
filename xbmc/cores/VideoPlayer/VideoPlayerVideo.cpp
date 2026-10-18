@@ -35,6 +35,12 @@
 
 using namespace std::chrono_literals;
 
+namespace
+{
+// in navigation mode the disc acts on read time; 4 s matches CDVDMessageQueue's default time size
+constexpr double NAV_MODE_QUEUE_TIME = 4.0;
+} // namespace
+
 class CDVDMsgVideoCodecChange : public CDVDMsg
 {
 public:
@@ -274,6 +280,8 @@ void CVideoPlayerVideo::CloseStream(bool bWaitForBuffers)
 bool CVideoPlayerVideo::AcceptsData() const
 {
   bool full = m_messageQueue.IsFull();
+  if (m_navMode && m_messageQueue.GetTimeSize() >= NAV_MODE_QUEUE_TIME)
+    full = true;
   return !full;
 }
 
