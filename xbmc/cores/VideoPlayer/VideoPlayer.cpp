@@ -1579,6 +1579,7 @@ void CVideoPlayer::Prepare()
   m_CurrentAudioID3.hint.Clear();
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
   m_navTail = false;
+  m_navStop = false;
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
@@ -1770,6 +1771,14 @@ void CVideoPlayer::Process()
     if (m_bAbortRequest)
       break;
 
+    // a playlist stop flushes the old item once it is taken, by a message or by the read, and a
+    // packet read with it belongs to that item
+    if (m_navStop)
+    {
+      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+    }
+
     // should we open a new input stream?
     if (!m_pInputStream)
     {
@@ -1785,6 +1794,7 @@ void CVideoPlayer::Process()
     {
       if (m_pInputStream->NextStream() == CDVDInputStream::NEXTSTREAM_NONE)
         break;
+      m_navStop = false;
 
       if (m_pInputStream->IsEOF())
         break;
@@ -1864,6 +1874,15 @@ void CVideoPlayer::Process()
     DemuxPacket* pPacket = NULL;
     CDemuxStream *pStream = NULL;
     ReadPacket(pPacket, pStream);
+
+    if (m_navStop)
+    {
+      CDVDDemuxUtils::FreeDemuxPacket(pPacket);
+      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+      continue;
+    }
+
     if (pPacket && !pStream)
     {
       /* probably a empty packet, just free it and move on */
@@ -1933,6 +1952,7 @@ void CVideoPlayer::Process()
         CloseStream(m_CurrentVideo, true);
 
         m_syncStartPtsWait.reset();
+        m_navStop = false;
         m_CurrentAudio.Clear();
         m_CurrentVideo.Clear();
         m_CurrentSubtitle.Clear();
@@ -5125,7 +5145,7 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
     case BD_EVENT_PLAYLIST_STOP:
       m_dvd.state = DVDSTATE_NORMAL;
       m_dvd.iDVDStillTime = 0ms;
-      m_messenger.Put(std::make_shared<CDVDMsg>(CDVDMsg::GENERAL_FLUSH));
+      m_navStop = true;
       break;
     case BD_EVENT_AUDIO_STREAM:
       m_dvd.iSelectedAudioStream = *static_cast<int*>(pData);
