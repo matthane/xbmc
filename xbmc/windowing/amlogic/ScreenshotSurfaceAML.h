@@ -18,5 +18,8 @@ public:
   static void Register();
   static std::unique_ptr<IScreenshotSurface> CreateSurface();
 
+  //! a scaled continuous composite while no video is presented comes from vdin1, or fails
+  bool CaptureDirect(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                     KODI::RENDERING::CAPTURE::CaptureResult& result) override;
   std::shared_ptr<KODI::RENDERING::CAPTURE::ICapturePixels> TakePixels() override;
 };
