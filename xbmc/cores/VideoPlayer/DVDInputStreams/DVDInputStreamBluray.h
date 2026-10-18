@@ -179,6 +179,7 @@ public:
   void ReleaseClipStart() { m_clipStartHeld = false; }
   bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
   bool IsTitleEnded() const { return m_endedTitleTime > 0; }
+  bool IsTitleEndWait() const { return m_titleEndWait; }
 
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
@@ -328,6 +329,7 @@ protected:
     std::vector<ClipSpan> m_clipSpans;
     bool m_hasMVCExtension{false};
     int m_endedTitleTime{0};
+    bool m_titleEndWait{false};
     std::vector<uint8_t> m_clipStart;
     size_t m_clipStartOffset{0};
     bool m_clipStartHeld{false};
