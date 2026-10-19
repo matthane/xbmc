@@ -255,7 +255,7 @@ public:
   {
   }
 
-  // every Lock reads the next frame, so a consumer is served while the GUI draws nothing; the
+  // every Lock reads a new frame, so a consumer is served while the GUI draws nothing; the
   // buffer holds it until Unlock
   const uint8_t* Lock() override
   {
@@ -353,7 +353,9 @@ public:
   {
     return input == m_input && width == m_width && height == m_height;
   }
-  void Drain();
+  //! Takes the newest frame vdin1 finished since the last dequeue, false when there is none or
+  //! when that dequeue is older than `maxAge`
+  bool TakeNewest(std::chrono::milliseconds maxAge, unsigned int& index);
   Wake Wait(int timeoutMs, unsigned int& index);
   bool Queue(unsigned int index);
   AMLCaptureImage Image(unsigned int index) const;
@@ -370,6 +372,7 @@ private:
   bool m_streaming{false};
   std::atomic<bool> m_stopped{false};
   std::vector<std::pair<void*, size_t>> m_maps;
+  std::chrono::steady_clock::time_point m_dequeued;
 };
 
 std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(AMLCaptureInput input,
@@ -530,6 +533,7 @@ bool CAMLCapture::CStream::Dequeue(unsigned int& index)
   if (ioctl(m_fd, VIDIOC_DQBUF, &buffer) < 0)
     return false;
 
+  m_dequeued = std::chrono::steady_clock::now();
   index = buffer.index;
   return true;
 }
@@ -546,13 +550,31 @@ bool CAMLCapture::CStream::HasFrame(int timeoutMs, bool& stopped)
   return ret > 0 && !stopped && (fds[0].revents & POLLIN) && !(fds[0].revents & POLLERR);
 }
 
-void CAMLCapture::CStream::Drain()
+bool CAMLCapture::CStream::TakeNewest(std::chrono::milliseconds maxAge, unsigned int& index)
 {
+  const auto age = std::chrono::steady_clock::now() - m_dequeued;
+
   // a DQBUF on an empty queue logs in the driver, so every one waits for poll
   bool stopped = false;
-  unsigned int index = 0;
-  while (HasFrame(0, stopped) && Dequeue(index))
+  size_t done = 0;
+  unsigned int next = 0;
+  while (HasFrame(0, stopped) && Dequeue(next))
+  {
+    if (done++ > 0)
+      Queue(index);
+    index = next;
+  }
+  if (done == 0)
+    return false;
+
+  // vdin1 hands each frame over a vsync late and drops frames once the buffers the reader does
+  // not hold are done, so after that many periods since the last dequeue the newest may be old
+  if (stopped || age >= maxAge)
+  {
     Queue(index);
+    return false;
+  }
+  return true;
 }
 
 CAMLCapture::CStream::Wake CAMLCapture::CStream::Wait(int timeoutMs, unsigned int& index)
@@ -774,6 +796,8 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
   const float fps = CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS();
   const int waitMs =
       static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * 1000.0f / std::max(fps, 1.0f)));
+  const std::chrono::milliseconds maxAge(
+      static_cast<int>((CAPTURE_BUFFERS - 2) * 1000.0f / std::max(fps, 1.0f)));
   bool restarted = false;
   for (;;)
   {
@@ -825,9 +849,9 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
       m_stream = stream;
     }
 
-    stream->Drain();
     unsigned int index = 0;
-    const CStream::Wake wake = stream->Wait(waitMs, index);
+    const CStream::Wake wake =
+        stream->TakeNewest(maxAge, index) ? CStream::Wake::FRAME : stream->Wait(waitMs, index);
     if (wake == CStream::Wake::FRAME)
     {
       AMLCaptureFrame frame;
