@@ -145,6 +145,9 @@ constexpr std::array<double, 6> HABLE{0.15, 0.5, 0.1, 0.2, 0.02, 0.3};
 constexpr double TONEMAP_PARAM = 1.0;
 constexpr double HABLE_EXPOSURE = 2.0;
 constexpr double HABLE_WHITE_NITS = 100.0;
+// that curve clips at half the peak; captures double its exposure and put white at the peak,
+// which lifts the midtones and rolls the highlights off up to the peak
+constexpr double CAPTURE_EXPOSURE = 2.0;
 constexpr double SDR_OUTPUT_GAMMA = 2.2;
 
 // interpolated tables stay within 0.1 8-bit code of the exact transfer functions; tables of
@@ -507,9 +510,9 @@ const std::vector<float>& CAMLCaptureConvert::GetToneMap(float luminance)
 
   // the shader scales linear light by (10000 / L) * (2 / param), then by the white point L / 100
   const double whitePoint = static_cast<double>(luminance) / HABLE_WHITE_NITS;
-  const double scale =
-      PQ_PEAK_NITS / static_cast<double>(luminance) * (HABLE_EXPOSURE / TONEMAP_PARAM) * whitePoint;
-  const double white = Hable(whitePoint);
+  const double scale = PQ_PEAK_NITS / static_cast<double>(luminance) *
+                       (HABLE_EXPOSURE / TONEMAP_PARAM) * whitePoint * CAPTURE_EXPOSURE;
+  const double white = Hable(scale * static_cast<double>(luminance) / PQ_PEAK_NITS);
   m_toneMap = MakeTable(TABLE_STEPS,
                         [scale, white](double root)
                         {
