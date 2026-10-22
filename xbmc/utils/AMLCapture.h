@@ -47,6 +47,14 @@ struct AMLCaptureFrame
   AMLCaptureColor color;
 };
 
+//! A 10-bit vdin1 frame copied out of its stream
+struct AMLCaptureShotFrame
+{
+  //! frame.image points into data
+  std::unique_ptr<uint8_t[]> data;
+  AMLCaptureFrame frame;
+};
+
 struct AMLCaptureVideoSpec
 {
   int width{0};
@@ -54,6 +62,8 @@ struct AMLCaptureVideoSpec
   //! the visible video, normalized to the output; vdin1 holds it at the frame origin
   CRect rect;
   bool continuous{false};
+  KODI::RENDERING::CAPTURE::CaptureScreenshot shot{
+      KODI::RENDERING::CAPTURE::CaptureScreenshot::NONE};
 };
 
 //! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
@@ -101,8 +111,17 @@ public:
   //! the input's continuous size when larger, else wait for the next one, and run `use` on it. An
   //! input or size change restarts the stream. A wait ends after a bound of output frame periods.
   bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
+  //! Consumer thread: copy out a frame of a one-shot 10-bit video stream at the largest capture
+  //! size. The stream closes before this returns; a continuous reader reopens its own.
+  bool ReadShot(AMLCaptureShotFrame& frame);
+  //! Consumer thread: run `use` on the frame of a shot, else, or when that fails, on a Read of
+  //! the video at width x height.
+  bool ReadVideo(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
+                 int width,
+                 int height,
+                 const ReadFunc& use);
 
-  //! The crop of an NV12 image to a normalized rect, on even pixels for the chroma plane
+  //! The crop of an NV12 or full pack image to a normalized rect, on even pixels for the chroma
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
 
   //! Deferred sRGB BGRA pixels of the visible video in result.
@@ -123,7 +142,12 @@ private:
 
   void ReleaseLease(AMLCaptureInput input, int width, int height);
   //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
-  bool ReadStream(AMLCaptureInput input, int width, int height, const StreamFunc& use);
+  bool ReadStream(AMLCaptureInput input,
+                  uint32_t pixelFormat,
+                  unsigned int buffers,
+                  int width,
+                  int height,
+                  const StreamFunc& use);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
   //! takes m_stream for Close; m_lock must be held

@@ -60,6 +60,10 @@ constexpr double DV_SDR_BLACK_NITS = 0.005;
 
 // swscale widens 8-bit codes to YUV444P16 by a shift of 8
 constexpr float CODE_SCALE_8_TO_16 = 256.0f;
+constexpr int CODE_SHIFT_10_TO_16 = 6;
+
+constexpr int FULL_PACK_CODE_BITS = 10;
+constexpr uint64_t FULL_PACK_CODE_MASK = (1 << FULL_PACK_CODE_BITS) - 1;
 
 constexpr float LIMITED_BLACK = 16.0f;
 constexpr float LIMITED_LUMA_SPAN = 219.0f;
@@ -486,6 +490,83 @@ bool DecodeRow(AMLCaptureSignal signal,
   }
 }
 
+// fill the odd samples of a chroma row that holds the pair's sample at the even ones
+void UpsampleChroma(uint16_t* row, int pairs, bool cosited)
+{
+  if (pairs <= 0)
+    return;
+
+  const int last = pairs - 1;
+  if (cosited)
+  {
+    for (int k = 0; k < last; k++)
+      row[2 * k + 1] = static_cast<uint16_t>((row[2 * k] + row[2 * k + 2] + 1) / 2);
+    row[2 * last + 1] = row[2 * last];
+    return;
+  }
+
+  // a pair average sits between its pixels, a quarter of a sample from each
+  int previous = row[0];
+  for (int k = 0; k < last; k++)
+  {
+    const int current = row[2 * k];
+    const int next = row[2 * k + 2];
+    row[2 * k] = static_cast<uint16_t>((previous + 3 * current + 2) / 4);
+    row[2 * k + 1] = static_cast<uint16_t>((3 * current + next + 2) / 4);
+    previous = current;
+  }
+  const int current = row[2 * last];
+  row[2 * last] = static_cast<uint16_t>((previous + 3 * current + 2) / 4);
+  row[2 * last + 1] = static_cast<uint16_t>(current);
+}
+
+// a full pack row to YUV444P16 rows, codes shifted as swscale widens 8-bit ones
+void UnpackFullPackRow(const AMLCaptureImage& src, int row, uint16_t* y, uint16_t* cb, uint16_t* cr)
+{
+  const auto code = [](uint64_t group, int index)
+  {
+    return static_cast<uint16_t>(((group >> (index * FULL_PACK_CODE_BITS)) & FULL_PACK_CODE_MASK)
+                                 << CODE_SHIFT_10_TO_16);
+  };
+  const int pairs = src.width / 2;
+  // a 64-bit load reads past its pair, so the last pair of a row is read bytewise
+  const int loads = std::endian::native == std::endian::little ? pairs - 1 : 0;
+  const uint8_t* in = src.data[0] + static_cast<std::ptrdiff_t>(row) * src.linesize[0];
+  const auto store = [&](int k, uint64_t group)
+  {
+    cb[2 * k] = code(group, 0);
+    y[2 * k] = code(group, 1);
+    cr[2 * k] = code(group, 2);
+    y[2 * k + 1] = code(group, 3);
+  };
+  int k = 0;
+  for (; k < loads; k++, in += AML_FULL_PACK_PAIR_BYTES)
+  {
+    uint64_t group = 0;
+    std::memcpy(&group, in, sizeof(group));
+    store(k, group);
+  }
+  for (; k < pairs; k++, in += AML_FULL_PACK_PAIR_BYTES)
+  {
+    uint64_t group = 0;
+    for (int b = AML_FULL_PACK_PAIR_BYTES - 1; b >= 0; b--)
+      group = group << 8 | in[b];
+    store(k, group);
+  }
+  UpsampleChroma(cb, pairs, src.cositedChroma);
+  UpsampleChroma(cr, pairs, src.cositedChroma);
+}
+
+// full pack to YUV444P16 planes of the source size
+void UnpackFullPack(const AMLCaptureImage& src, uint16_t* y, uint16_t* cb, uint16_t* cr)
+{
+  for (int row = 0; row < src.height; row++)
+  {
+    const std::size_t offset = static_cast<std::size_t>(row) * src.width;
+    UnpackFullPackRow(src, row, y + offset, cb + offset, cr + offset);
+  }
+}
+
 uint8_t To8(float v)
 {
   return static_cast<uint8_t>(v * 255 + 0.5f);
@@ -559,6 +640,28 @@ bool CAMLCaptureConvert::Stage(const AMLCaptureImage& src, int width, int height
                     reinterpret_cast<uint8_t*>(m_yuv.Data() + 2 * plane), nullptr};
   const int yuvStride[] = {width * 2, width * 2, width * 2, 0};
 
+  // a full pack is the caller's copy, so it is unpacked straight to planes
+  if (src.fullPack)
+  {
+    const std::size_t srcPlane = static_cast<std::size_t>(src.width) * src.height;
+    m_unpacked.Resize(srcPlane * 3);
+    UnpackFullPack(src, m_unpacked.Data(), m_unpacked.Data() + srcPlane,
+                   m_unpacked.Data() + 2 * srcPlane);
+    m_scaleContext = sws_getCachedContext(
+        m_scaleContext, src.width, src.height, AV_PIX_FMT_YUV444P16LE, width, height,
+        AV_PIX_FMT_YUV444P16LE, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!m_scaleContext)
+      return false;
+
+    const uint8_t* srcData[] = {reinterpret_cast<const uint8_t*>(m_unpacked.Data()),
+                                reinterpret_cast<const uint8_t*>(m_unpacked.Data() + srcPlane),
+                                reinterpret_cast<const uint8_t*>(m_unpacked.Data() + 2 * srcPlane),
+                                nullptr};
+    const int srcStride[] = {src.width * 2, src.width * 2, src.width * 2, 0};
+    sws_scale(m_scaleContext, srcData, srcStride, 0, src.height, yuv, yuvStride);
+    return true;
+  }
+
   // the capture mapping is uncached: one sequential read, and every pass after it on the copy
   const std::size_t luma = static_cast<std::size_t>(src.width) * src.height;
   m_source.Resize(luma + luma / 2);
@@ -589,14 +692,18 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
                                  const AMLCaptureImage* sdr)
 {
   const bool bgra = dst.format == AV_PIX_FMT_BGRA;
-  if (src.format != AV_PIX_FMT_NV12 || src.width <= 0 || src.height <= 0 || dst.width <= 0 ||
-      dst.height <= 0 || (!bgra && dst.format != AV_PIX_FMT_RGBA64LE))
+  if ((src.format != AV_PIX_FMT_NV12 && !src.fullPack) || src.width <= 0 || src.height <= 0 ||
+      dst.width <= 0 || dst.height <= 0 || (!bgra && dst.format != AV_PIX_FMT_RGBA64LE))
     return false;
 
-  if (!Stage(src, dst.width, dst.height))
+  // a full pack at the output size is unpacked a row at a time, which spares the planes
+  const bool packRows = src.fullPack && src.width == dst.width && src.height == dst.height;
+  if (packRows)
+    m_yuv.Resize(static_cast<std::size_t>(dst.width) * 3);
+  else if (!Stage(src, dst.width, dst.height))
     return false;
 
-  const std::size_t plane = static_cast<std::size_t>(dst.width) * dst.height;
+  const std::size_t plane = static_cast<std::size_t>(dst.width) * (packRows ? 1 : dst.height);
   const std::vector<float>* toneMap = IsSdr(color.signal) ? nullptr : &GetToneMap(color.luminance);
   const Tables& tables = GetTables();
   // an HDR coding holds the SDR video as the GUI shader places SDR
@@ -606,7 +713,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
   const Planes p = {rows.data(), rows.data() + dst.width, rows.data() + 2 * dst.width};
   for (int y = 0; y < dst.height; y++)
   {
-    const uint16_t* luma = m_yuv.Data() + static_cast<std::size_t>(y) * dst.width;
+    uint16_t* luma = m_yuv.Data() + (packRows ? 0 : static_cast<std::size_t>(y) * dst.width);
+    if (packRows)
+      UnpackFullPackRow(src, y, luma, luma + plane, luma + 2 * plane);
     if (DecodeRow(color.signal, luma, luma + plane, luma + 2 * plane, dst.width, tables, p))
     {
       ApplyRow(BT2020_TO_BT709, p, dst.width);
