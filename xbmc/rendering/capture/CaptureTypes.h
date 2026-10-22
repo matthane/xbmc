@@ -63,6 +63,7 @@ enum class CaptureScreenshot
 {
   NONE,
   STANDARD, //!< what the user sees
+  NATIVE, //!< the output at its own size and coding, where the platform can tell them apart
 };
 
 struct CaptureSpec
@@ -93,6 +94,8 @@ struct CaptureResult
   //! the pixels read the newest frame on every Lock, so a consumer may copy them again without
   //! waiting for a delivery; a delivery comes only with a drawn frame
   bool live{false};
+  //! the pixels went through a display mapping, not only the output coding
+  bool displayMapped{false};
   //! HDR mastering/light metadata of the captured content, carried verbatim so
   //! an SDR tonemap has the same source peak the thumbnail extractor uses
   bool hasDisplayMetadata{false};

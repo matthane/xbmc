@@ -109,11 +109,12 @@ constexpr double HABLE_WHITE_NITS = 100.0;
 constexpr double TONEMAP_SCALE = PQ_PEAK_NITS / HABLE_WHITE_NITS * HABLE_EXPOSURE / TONEMAP_PARAM;
 constexpr double SDR_OUTPUT_GAMMA = 2.2;
 
-// interpolated tables stay within 0.1 8-bit code of the exact transfer functions
+// interpolated tables stay within 0.1 8-bit code of the exact transfer functions; tables of
+// linear light are indexed by its fourth root, which spaces the steps much like PQ does
 constexpr int PQ_EOTF_STEPS = 16384;
 constexpr int TABLE_STEPS = 4096;
 // a log table indexes linear light by the float's exponent and top mantissa bits, uniform in
-// linear within each of its octaves
+// linear within each of its octaves; it needs no root
 constexpr int LOG_TABLE_STEP_BITS = 8;
 constexpr int LOG_TABLE_OCTAVES = 48;
 constexpr int FLOAT_MANTISSA_BITS = 23;
@@ -229,6 +230,11 @@ std::vector<float> MakeTable(int steps, F f)
   return table;
 }
 
+std::vector<float> MakeRootTable(int steps, double (*f)(double))
+{
+  return MakeTable(steps, [f](double root) { return f(root * root * root * root); });
+}
+
 template<typename F>
 std::vector<float> MakeLogTable(F f)
 {
@@ -246,6 +252,19 @@ std::vector<float> MakeLogTable(F f)
   return table;
 }
 
+float Lookup(const std::vector<float>& table, float v)
+{
+  const int steps = static_cast<int>(table.size()) - 2;
+  const float pos = std::clamp(v, 0.0f, 1.0f) * steps;
+  const int i = static_cast<int>(pos);
+  return table[i] + (table[i + 1] - table[i]) * (pos - i);
+}
+
+float LookupRoot(const std::vector<float>& table, float linear)
+{
+  return Lookup(table, std::sqrt(std::sqrt(std::max(linear, 0.0f))));
+}
+
 float LookupLog(const float* table, float linear)
 {
   const uint32_t bits = std::bit_cast<uint32_t>(std::clamp(linear, LOG_TABLE_MIN, 1.0f)) -
@@ -259,8 +278,10 @@ float LookupLog(const float* table, float linear)
 struct Tables
 {
   std::vector<float> pqToLinear = MakeTable(PQ_EOTF_STEPS, PQToLinear);
+  std::vector<float> linearToPQ = MakeRootTable(TABLE_STEPS, LinearToPQ);
   std::vector<float> linearToPQLog = MakeLogTable(LinearToPQ);
   std::vector<float> srgbToLinear = MakeTable(TABLE_STEPS, SrgbToLinear);
+  std::vector<float> linearToSrgb = MakeRootTable(TABLE_STEPS, LinearToSrgb);
   std::vector<float> linearToSrgbLog = MakeLogTable(LinearToSrgb);
   std::vector<float> hlgToScene = MakeTable(TABLE_STEPS, HlgToScene);
   std::vector<float> hlgSystemGain = MakeLogTable(HlgSystemGain);
@@ -308,6 +329,116 @@ void YccToRgb(const float ycc[3], float kr, float kb, float out[3])
     lms[c] = eotf[i] + (eotf[i + 1] - eotf[i]) * (pos - i);
   }
   Apply(BT2100_LMS_TO_RGB, lms, linear);
+}
+
+void HlgToLinear(const float hlg[3], const Tables& tables, float out[3])
+{
+  float scene[3];
+  for (int c = 0; c < 3; c++)
+    scene[c] = Lookup(tables.hlgToScene, hlg[c]);
+  const float luma =
+      BT2020_KR * scene[0] + (1 - BT2020_KR - BT2020_KB) * scene[1] + BT2020_KB * scene[2];
+  const double gain = luma > 0 ? HlgSystemGain(luma) : 0.0;
+  for (int c = 0; c < 3; c++)
+    out[c] = static_cast<float>(static_cast<double>(scene[c]) * gain);
+}
+
+void LinearToHlg(const float linear[3], float out[3])
+{
+  double v[3];
+  for (int c = 0; c < 3; c++)
+    v[c] = static_cast<double>(std::max(linear[c], 0.0f));
+  const double gain = HlgInverseGain(static_cast<double>(BT2020_KR) * v[0] +
+                                     static_cast<double>(1 - BT2020_KR - BT2020_KB) * v[1] +
+                                     static_cast<double>(BT2020_KB) * v[2]);
+  for (int c = 0; c < 3; c++)
+    out[c] = static_cast<float>(SceneToHlg(v[c] * gain));
+}
+
+void SdrToLinear(float whiteNits, const Tables& tables, float v[3])
+{
+  float linear[3];
+  for (int c = 0; c < 3; c++)
+    linear[c] = static_cast<float>(static_cast<double>(Lookup(tables.srgbToLinear, v[c])) *
+                                   static_cast<double>(whiteNits) / PQ_PEAK_NITS);
+  Apply(BT709_TO_BT2020, linear, v);
+}
+
+void HdrToLinear(AMLCaptureCoding::Transfer transfer, const Tables& tables, float v[3])
+{
+  switch (transfer)
+  {
+    case AMLCaptureCoding::Transfer::PQ:
+      for (int c = 0; c < 3; c++)
+        v[c] = Lookup(tables.pqToLinear, v[c]);
+      break;
+    case AMLCaptureCoding::Transfer::HLG:
+    {
+      const float hlg[3] = {v[0], v[1], v[2]};
+      HlgToLinear(hlg, tables, v);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Y'CbCr to R'G'B' in 16-bit codes, the spans folded into the coefficients
+struct YccCoefficients
+{
+  float y{0.0f};
+  float rCr{0.0f};
+  float gCb{0.0f};
+  float gCr{0.0f};
+  float bCb{0.0f};
+};
+
+YccCoefficients MakeYccCoefficients(float kr, float kb)
+{
+  const double luma = 65535 / static_cast<double>(LIMITED_LUMA_SPAN * CODE_SCALE_8_TO_16);
+  const double chroma = 65535 / static_cast<double>(LIMITED_CHROMA_SPAN * CODE_SCALE_8_TO_16);
+  const double r = static_cast<double>(kr);
+  const double b = static_cast<double>(kb);
+  const double g = 1 - r - b;
+  YccCoefficients out;
+  out.y = static_cast<float>(luma);
+  out.rCr = static_cast<float>(chroma * 2 * (1 - r));
+  out.gCb = static_cast<float>(-chroma * 2 * b * (1 - b) / g);
+  out.gCr = static_cast<float>(-chroma * 2 * r * (1 - r) / g);
+  out.bCb = static_cast<float>(chroma * 2 * (1 - b));
+  return out;
+}
+
+uint16_t ClampTo16(float code)
+{
+  return static_cast<uint16_t>(std::clamp(code, 0.0f, 65535.0f) + 0.5f);
+}
+
+uint16_t ToBigEndian(uint16_t code)
+{
+  if constexpr (std::endian::native == std::endian::little)
+    return static_cast<uint16_t>(code << 8 | code >> 8);
+  return code;
+}
+
+void YccRowToRgb(const uint16_t* y,
+                 const uint16_t* cb,
+                 const uint16_t* cr,
+                 int width,
+                 const YccCoefficients& k,
+                 uint16_t* __restrict out)
+{
+  const float black = LIMITED_BLACK * CODE_SCALE_8_TO_16;
+  const float zero = LIMITED_CHROMA_ZERO * CODE_SCALE_8_TO_16;
+  for (int x = 0; x < width; x++, out += 3)
+  {
+    const float luma = k.y * (y[x] - black);
+    const float b = cb[x] - zero;
+    const float r = cr[x] - zero;
+    out[0] = ToBigEndian(ClampTo16(luma + k.rCr * r));
+    out[1] = ToBigEndian(ClampTo16(luma + k.gCb * b + k.gCr * r));
+    out[2] = ToBigEndian(ClampTo16(luma + k.bCb * b));
+  }
 }
 
 // a row of pixels as three planes of floats, which each step converts in place
@@ -416,6 +547,26 @@ void IctcpRow(const uint16_t* y,
     r[x] = linear[0];
     g[x] = linear[1];
     b[x] = linear[2];
+  }
+}
+
+// Dolby Vision decoded to PQ BT.2020
+void IctcpRowToPQ(const uint16_t* y,
+                  const uint16_t* cb,
+                  const uint16_t* cr,
+                  int width,
+                  const Tables& tables,
+                  uint16_t* __restrict out)
+{
+  const float* eotf = tables.pqToLinear.data();
+  const float eotfSteps = static_cast<float>(tables.pqToLinear.size() - 2);
+  const float* oetf = tables.linearToPQLog.data();
+  for (int x = 0; x < width; x++, out += 3)
+  {
+    float linear[3];
+    IctcpToLinear(y[x], cb[x], cr[x], eotf, eotfSteps, linear);
+    for (int c = 0; c < 3; c++)
+      out[c] = ToBigEndian(ClampTo16(LookupLog(oetf, linear[c]) * 65535));
   }
 }
 
@@ -770,6 +921,125 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
       }
     }
   }
+  return true;
+}
+
+bool CAMLCaptureConvert::ConvertNative(const AMLCaptureImage& src,
+                                       const AMLCaptureColor& color,
+                                       const AMLCaptureImage& dst)
+{
+  if (!src.fullPack || src.width <= 0 || src.height <= 0 || src.width != dst.width ||
+      src.height != dst.height || dst.format != AV_PIX_FMT_RGB48BE)
+    return false;
+
+  // the signal's own R'G'B'; Dolby Vision has none, so it is coded PQ
+  bool ictcp = false;
+  YccCoefficients coefficients;
+  switch (color.signal)
+  {
+    case AMLCaptureSignal::PQ:
+    case AMLCaptureSignal::HLG:
+      coefficients = MakeYccCoefficients(BT2020_KR, BT2020_KB);
+      break;
+    case AMLCaptureSignal::DV_TV_LED:
+    case AMLCaptureSignal::DV_LL:
+    case AMLCaptureSignal::DV_HDR10:
+    case AMLCaptureSignal::DV_SDR:
+      ictcp = true;
+      break;
+    case AMLCaptureSignal::SDR:
+    default:
+      coefficients = MakeYccCoefficients(BT709_KR, BT709_KB);
+      break;
+  }
+
+  const int width = dst.width;
+  const auto yuv = std::make_unique_for_overwrite<uint16_t[]>(static_cast<std::size_t>(width) * 3);
+  uint16_t* luma = yuv.get();
+  const Tables& tables = GetTables();
+  for (int y = 0; y < dst.height; y++)
+  {
+    UnpackFullPackRow(src, y, luma, luma + width, luma + 2 * width);
+    uint16_t* out =
+        reinterpret_cast<uint16_t*>(dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0]);
+    if (ictcp)
+      IctcpRowToPQ(luma, luma + width, luma + 2 * width, width, tables, out);
+    else
+      YccRowToRgb(luma, luma + width, luma + 2 * width, width, coefficients, out);
+  }
+  return true;
+}
+
+AMLCaptureCoding::Transfer CAMLCaptureConvert::GetNativeTransfer(AMLCaptureSignal signal)
+{
+  switch (signal)
+  {
+    case AMLCaptureSignal::PQ:
+    case AMLCaptureSignal::DV_TV_LED:
+    case AMLCaptureSignal::DV_LL:
+    case AMLCaptureSignal::DV_HDR10:
+    case AMLCaptureSignal::DV_SDR:
+      return AMLCaptureCoding::Transfer::PQ;
+    case AMLCaptureSignal::HLG:
+      return AMLCaptureCoding::Transfer::HLG;
+    case AMLCaptureSignal::SDR:
+    default:
+      return AMLCaptureCoding::Transfer::SDR;
+  }
+}
+
+void CAMLCaptureConvert::Recode(const float in[3],
+                                const AMLCaptureCoding& from,
+                                const AMLCaptureCoding& to,
+                                float out[3])
+{
+  const Tables& tables = GetTables();
+  float v[3] = {in[0], in[1], in[2]};
+  if (from.transfer == AMLCaptureCoding::Transfer::SDR)
+    SdrToLinear(from.whiteNits, tables, v);
+  else
+    HdrToLinear(from.transfer, tables, v);
+
+  switch (to.transfer)
+  {
+    case AMLCaptureCoding::Transfer::PQ:
+      for (int c = 0; c < 3; c++)
+        out[c] = LookupRoot(tables.linearToPQ, v[c]);
+      break;
+    case AMLCaptureCoding::Transfer::HLG:
+      LinearToHlg(v, out);
+      break;
+    case AMLCaptureCoding::Transfer::SDR:
+    default:
+    {
+      for (int c = 0; c < 3; c++)
+        v[c] = static_cast<float>(static_cast<double>(v[c]) * PQ_PEAK_NITS /
+                                  static_cast<double>(to.whiteNits));
+      Apply(BT2020_TO_BT709, v, out);
+      for (int c = 0; c < 3; c++)
+        out[c] = LookupRoot(tables.linearToSrgb, out[c]);
+      break;
+    }
+  }
+
+  for (int c = 0; c < 3; c++)
+    out[c] = std::clamp(out[c], 0.0f, 1.0f);
+}
+
+bool CAMLCaptureConvert::Scale(const AMLCaptureImage& src, const AMLCaptureImage& dst)
+{
+  SwsContext* context = sws_getContext(
+      src.width, src.height, AV_PIX_FMT_RGBA, dst.width, dst.height, AV_PIX_FMT_RGBA,
+      SWS_BILINEAR | SWS_FULL_CHR_H_INP | SWS_ACCURATE_RND, nullptr, nullptr, nullptr);
+  if (!context)
+    return false;
+
+  const uint8_t* srcData[] = {src.data[0], nullptr, nullptr, nullptr};
+  const int srcStride[] = {src.linesize[0], 0, 0, 0};
+  uint8_t* dstData[] = {dst.data[0], nullptr, nullptr, nullptr};
+  const int dstStride[] = {dst.linesize[0], 0, 0, 0};
+  sws_scale(context, srcData, srcStride, 0, src.height, dstData, dstStride);
+  sws_freeContext(context);
   return true;
 }
 
