@@ -80,20 +80,14 @@ Frame::~Frame()
 
 struct ThumbDataManagement
 {
-  uint8_t* intermediateBuffer = nullptr; // gets av_alloced
   AVFrame* frame_input = nullptr;
-  AVFrame* frame_temporary = nullptr;
   SwsContext* sws = nullptr;
   AVCodecContext* avOutctx = nullptr;
   const AVCodec* codec = nullptr;
   ~ThumbDataManagement()
   {
-    av_free(intermediateBuffer);
-    intermediateBuffer = nullptr;
     av_frame_free(&frame_input);
     frame_input = nullptr;
-    av_frame_free(&frame_temporary);
-    frame_temporary = nullptr;
     avcodec_free_context(&avOutctx);
     avOutctx = nullptr;
     sws_freeContext(sws);
@@ -672,25 +666,6 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
   tdm.avOutctx->global_quality =
       jpg_output ? quality * FF_QP2LAMBDA : tdm.avOutctx->qmin * FF_QP2LAMBDA;
 
-  unsigned int internalBufOutSize = 0;
-
-  int size = av_image_get_buffer_size(tdm.avOutctx->pix_fmt, tdm.avOutctx->width, tdm.avOutctx->height, 16);
-  if (size < 0)
-  {
-    CLog::Log(LOGERROR, "Could not compute picture size for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    return false;
-  }
-  internalBufOutSize = (unsigned int) size;
-
-  tdm.intermediateBuffer = (uint8_t*) av_malloc(internalBufOutSize);
-  if (!tdm.intermediateBuffer)
-  {
-    CLog::Log(LOGERROR, "Could not allocate memory for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    return false;
-  }
-
   if (avcodec_open2(tdm.avOutctx, tdm.codec, NULL) < 0)
   {
     CLog::Log(LOGERROR, "Could not open avcodec context thumbnail: {}", destFile);
@@ -706,26 +681,13 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
     return false;
   }
 
-  // convert the RGB32 frame to AV_PIX_FMT_YUV420P - we use this later on as AV_PIX_FMT_YUVJ420P
-  tdm.frame_temporary = av_frame_alloc();
-  if (!tdm.frame_temporary)
-  {
-    CLog::Log(LOGERROR, "Could not allocate frame for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    return false;
-  }
-
   AVPixelFormat intermediateFmt = jpg_output ? AV_PIX_FMT_YUV420P
                                   : is16bit  ? fmt16bit
                                              : AV_PIX_FMT_RGBA;
-  if (av_image_fill_arrays(tdm.frame_temporary->data, tdm.frame_temporary->linesize,
-                           tdm.intermediateBuffer, intermediateFmt, width, height, 16) < 0)
-  {
-    CLog::Log(LOGERROR, "Could not fill picture for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    return false;
-  }
-
+  // a refcounted frame is passed to the encoder without a copy
+  tdm.frame_input->format = intermediateFmt;
+  tdm.frame_input->width = width;
+  tdm.frame_input->height = height;
   uint8_t* src[] = { bufferin, NULL, NULL, NULL };
   int srcStride[] = { (int) pitch, 0, 0, 0};
 
@@ -747,9 +709,16 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
       srcFmt = opaque ? AV_PIX_FMT_BGR0 : AV_PIX_FMT_RGB32;
       break;
   }
-  AVPixelFormat dstFmt = jpg_output ? AV_PIX_FMT_YUV420P : is16bit ? fmt16bit : AV_PIX_FMT_RGBA;
+
+  if (av_frame_get_buffer(tdm.frame_input, 0) < 0)
+  {
+    CLog::Log(LOGERROR, "Could not fill picture for thumbnail: {}", destFile);
+    CleanupLocalOutputBuffer();
+    return false;
+  }
+
   // SWS_ACCURATE_RND skips RGB->YUV fast paths that ignore the range set below
-  tdm.sws = sws_getContext(width, height, srcFmt, width, height, dstFmt,
+  tdm.sws = sws_getContext(width, height, srcFmt, width, height, intermediateFmt,
                            jpg_output ? SWS_ACCURATE_RND : 0, nullptr, nullptr, nullptr);
   if (!tdm.sws)
   {
@@ -781,7 +750,8 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
     }
   }
 
-  if (sws_scale(tdm.sws, src, srcStride, 0, height, tdm.frame_temporary->data, tdm.frame_temporary->linesize) < 0)
+  if (sws_scale(tdm.sws, src, srcStride, 0, height, tdm.frame_input->data,
+                tdm.frame_input->linesize) < 0)
   {
     CLog::Log(LOGERROR, "SWS_SCALE failed for thumbnail: {}", destFile);
     CleanupLocalOutputBuffer();
@@ -789,16 +759,9 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
   }
   tdm.frame_input->pts = 1;
   tdm.frame_input->quality = tdm.avOutctx->global_quality;
-  tdm.frame_input->data[0] = tdm.frame_temporary->data[0];
-  tdm.frame_input->data[1] = tdm.frame_temporary->data[1];
-  tdm.frame_input->data[2] = tdm.frame_temporary->data[2];
-  tdm.frame_input->height = height;
-  tdm.frame_input->width = width;
-  tdm.frame_input->linesize[0] = tdm.frame_temporary->linesize[0];
-  tdm.frame_input->linesize[1] = tdm.frame_temporary->linesize[1];
-  tdm.frame_input->linesize[2] = tdm.frame_temporary->linesize[2];
   // this is deprecated but mjpeg is not yet transitioned
-  tdm.frame_input->format = jpg_output ? AV_PIX_FMT_YUVJ420P : is16bit ? fmt16bit : AV_PIX_FMT_RGBA;
+  if (jpg_output)
+    tdm.frame_input->format = AV_PIX_FMT_YUVJ420P;
 
   // CICP color signaling (PNG cICP/sRGB chunk). Only the PNG (RGB) path uses
   // it; JPEG ignores it. A negative code leaves the field unset.
