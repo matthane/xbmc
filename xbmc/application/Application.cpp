@@ -868,6 +868,15 @@ void ServiceCaptureTaps()
     return;
   }
 
+  if (CaptureResult result; surface->CaptureDirect(request->spec, result))
+  {
+    if (result.pixels)
+      captureService->Complete(request, std::move(result));
+    else
+      captureService->Fail(request);
+    return;
+  }
+
   const ScreenshotContext ctx{*winSystem};
   if (!surface->Read(ctx))
   {

@@ -100,7 +100,8 @@ public:
   //! Any thread: completed deliveries so far; waiters compare against the last one seen.
   uint64_t GetDeliveries(const CaptureRequest& request) const;
 
-  //! Any thread: locked copy of the latest result; per-frame pixel buffers are immutable.
+  //! Any thread: locked copy of the latest result; per-frame pixel buffers are immutable unless
+  //! the result is live.
   CaptureResult CopyResult(const CaptureRequest& request) const;
 
   //! Teardown: fail every request, wake every waiter, drop queued callbacks.
