@@ -9,6 +9,7 @@
 
 #include "ServiceBroker.h"
 #include "rendering/capture/CapturePixels.h"
+#include "rendering/capture/CaptureTypes.h"
 #include "utils/AMLCapture.h"
 #include "utils/Screenshot.h"
 #include "windowing/amlogic/WinSystemAmlogicGLESContext.h"
@@ -237,6 +238,21 @@ void CScreenshotSurfaceAML::Register()
 std::unique_ptr<IScreenshotSurface> CScreenshotSurfaceAML::CreateSurface()
 {
   return std::make_unique<CScreenshotSurfaceAML>();
+}
+
+bool CScreenshotSurfaceAML::CaptureDirect(const CaptureSpec& spec, CaptureResult& result)
+{
+  if (spec.content != CaptureContent::COMPOSITE || spec.cadence != CaptureCadence::CONTINUOUS ||
+      spec.format != CaptureFormat::BGRA8 || spec.width == 0 || spec.height == 0)
+    return false;
+
+  const auto session = CAMLCapture::GetActive();
+  if (session && session->IsPresented())
+    return false;
+
+  // without vdin1 the fallback is a full-size readback on every drawn frame, so the request fails
+  CAMLCapture::CreateGuiPixels(static_cast<int>(spec.width), static_cast<int>(spec.height), result);
+  return true;
 }
 
 void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& result)
