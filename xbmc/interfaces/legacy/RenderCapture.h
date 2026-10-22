@@ -49,6 +49,7 @@ namespace XBMCAddon
       std::unique_ptr<KODI::RENDERING::CAPTURE::CCaptureHandle> m_handle;
       unsigned int m_width{0};
       unsigned int m_height{0};
+      bool m_composite{false};
       std::unique_ptr<uint8_t[]> m_buffer;
 
 #ifndef SWIG
@@ -174,24 +175,28 @@ namespace XBMCAddon
 #ifdef DOXYGEN_SHOULD_USE_THIS
       ///
       /// \ingroup python_xbmc_RenderCapture
-      /// @brief \python_func{ capture(width, height) }
+      /// @brief \python_func{ capture(width, height[, composite]) }
       /// Issue capture request.
       ///
       /// @param width               Width capture image should be rendered to
       /// @param height              Height capture image should should be rendered to
+      /// @param composite           [opt] bool - True captures the screen as shown, GUI
+      ///                            included; False (default) captures the video only
       ///
       ///
       ///-----------------------------------------------------------------------
       /// @python_v17 Removed the option to pass **flags**
+      /// @python_v22 Added the option **composite**.
       ///
       capture(...)
 #else
-      inline void capture(int width, int height)
+      inline void capture(int width, int height, bool composite = false)
 #endif
       {
         // a running continuous capture already delivers fresh frames at this size
         if (m_handle && static_cast<unsigned int>(width) == m_width &&
-            static_cast<unsigned int>(height) == m_height && IsRunning())
+            static_cast<unsigned int>(height) == m_height && composite == m_composite &&
+            IsRunning())
           return;
 
         // cancel any previous request before its buffer goes away
@@ -199,6 +204,7 @@ namespace XBMCAddon
 
         m_width = width;
         m_height = height;
+        m_composite = composite;
         m_buffer = std::make_unique<uint8_t[]>(static_cast<size_t>(m_width) * m_height * 4);
 
         m_service = CServiceBroker::GetCaptureService();
@@ -206,7 +212,8 @@ namespace XBMCAddon
           return;
 
         KODI::RENDERING::CAPTURE::CaptureSpec spec;
-        spec.content = KODI::RENDERING::CAPTURE::CaptureContent::VIDEO;
+        spec.content = composite ? KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE
+                                 : KODI::RENDERING::CAPTURE::CaptureContent::VIDEO;
         spec.cadence = KODI::RENDERING::CAPTURE::CaptureCadence::CONTINUOUS;
         spec.width = m_width;
         spec.height = m_height;
