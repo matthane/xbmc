@@ -105,7 +105,7 @@ public:
     m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_gui.width) *
                                                          m_gui.height * 4);
     const auto session = m_session.lock();
-    if (!session || !session->Read(m_gui.streamWidth, m_gui.streamHeight,
+    if (!session || !session->Read(AMLCaptureInput::VIDEO, m_gui.streamWidth, m_gui.streamHeight,
                                    [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
                                    { return Blend(frame, convert); }))
     {
