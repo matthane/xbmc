@@ -82,6 +82,9 @@ struct CaptureResult
   //! which tap produced this result; stamped at delivery so a BOTH consumer
   //! knows whether it holds the video-only or the composite capture
   CaptureContent content{CaptureContent::COMPOSITE};
+  //! the pixels read the newest frame on every Lock, so a consumer may copy them again without
+  //! waiting for a delivery; a delivery comes only with a drawn frame
+  bool live{false};
   //! HDR mastering/light metadata of the captured content, carried verbatim so
   //! an SDR tonemap has the same source peak the thumbnail extractor uses
   bool hasDisplayMetadata{false};

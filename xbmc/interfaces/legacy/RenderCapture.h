@@ -226,8 +226,16 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
-        if (!WaitFrame(msec))
-          return false;
+        if (!m_handle->WaitNext(std::chrono::milliseconds(0)))
+        {
+          const bool running = IsRunning();
+          const KODI::RENDERING::CAPTURE::CaptureResult last = m_handle->CopyResult();
+          if (last.live && running &&
+              KODI::RENDERING::CAPTURE::CaptureCopyBGRA8(last, m_width, m_height, m_buffer.get()))
+            return true;
+          if (!WaitFrame(msec))
+            return false;
+        }
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
         // legacy contract: raw output-coded 8-bit BGRA, never tonemapped; an
         // HDR session delivers PQ/HLG-coded bytes exactly as glReadPixels did

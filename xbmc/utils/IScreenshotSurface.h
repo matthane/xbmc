@@ -38,6 +38,14 @@ public:
   //! fully rendered frame and render-thread context.
   virtual bool Read(const ScreenshotContext& ctx) { return false; }
 
+  //! \brief Render thread: serve a capture without the framebuffer readback, e.g. from a
+  //! display writeback. False leaves it to Read; true with no pixels fails the request.
+  virtual bool CaptureDirect(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                             KODI::RENDERING::CAPTURE::CaptureResult& result)
+  {
+    return false;
+  }
+
   int GetWidth() const { return m_width; }
   int GetHeight() const { return m_height; }
   //! signed linesize; negative when the delivered rows are bottom-up
