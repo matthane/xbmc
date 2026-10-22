@@ -10,6 +10,7 @@
 
 #include "AddonClass.h"
 #include "Exception.h"
+#include "LanguageHook.h"
 #include "ServiceBroker.h"
 #include "application/ApplicationComponents.h"
 #include "application/ApplicationPlayer.h"
@@ -48,6 +49,16 @@ namespace XBMCAddon
       unsigned int m_width{0};
       unsigned int m_height{0};
       std::unique_ptr<uint8_t[]> m_buffer;
+
+#ifndef SWIG
+      //! waits for the next frame without holding the interpreter lock
+      bool WaitFrame(unsigned int msec)
+      {
+        KODI::RENDERING::CAPTURE::CCaptureHandle& handle = *m_handle;
+        DelayedCallGuard dg(languageHook);
+        return handle.WaitNext(std::chrono::milliseconds(msec ? msec : 1000));
+      }
+#endif
 
     public:
       RenderCapture() = default;
@@ -194,7 +205,7 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
-        if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
+        if (!WaitFrame(msec))
           return false;
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
         // legacy contract: raw output-coded 8-bit BGRA, never tonemapped; an
