@@ -145,7 +145,6 @@ CFFmpegImage::CFFmpegImage(const std::string& strMimeType) : m_strMimeType(strMi
 {
   m_hasAlpha = false;
   m_pFrame = nullptr;
-  m_outputBuffer = nullptr;
 }
 
 CFFmpegImage::~CFFmpegImage()
@@ -789,21 +788,11 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
     return false;
   }
 
+  // the caller reads the packet until ReleaseThumbnailBuffer
+  CleanupLocalOutputBuffer();
+  m_outputPacket = avpkt;
+  bufferout = avpkt->data;
   bufferoutSize = avpkt->size;
-  m_outputBuffer = (uint8_t*) av_malloc(bufferoutSize);
-  if (!m_outputBuffer)
-  {
-    CLog::Log(LOGERROR, "Could not generate allocate memory for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    av_packet_free(&avpkt);
-    return false;
-  }
-  // update buffer ptr for caller
-  bufferout = m_outputBuffer;
-
-  // copy avpkt data into outputbuffer
-  memcpy(m_outputBuffer, avpkt->data, avpkt->size);
-  av_packet_free(&avpkt);
 
   return true;
 }
@@ -815,8 +804,7 @@ void CFFmpegImage::ReleaseThumbnailBuffer()
 
 void CFFmpegImage::CleanupLocalOutputBuffer()
 {
-  av_free(m_outputBuffer);
-  m_outputBuffer = nullptr;
+  av_packet_free(&m_outputPacket);
 }
 
 std::shared_ptr<Frame> CFFmpegImage::ReadFrame()
