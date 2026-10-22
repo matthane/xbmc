@@ -112,6 +112,7 @@ void CScreenShot::TakeScreenshot(const std::string& filename,
   CaptureSpec spec;
   spec.content = content;
   spec.format = CaptureFormat::NATIVE;
+  spec.screenshot = CaptureScreenshot::STANDARD;
 
   // failure dispatches an empty result because some consumers must act on
   // it (a bookmark still writes its DB row); here WriteCapture declines it
@@ -161,6 +162,7 @@ void CScreenShot::TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent conten
   CaptureSpec spec;
   spec.content = content;
   spec.format = CaptureFormat::NATIVE;
+  spec.screenshot = CaptureScreenshot::STANDARD;
 
   // Submitted before any filesystem work so the readback grabs the current frame;
   // the folder dialog (when the path is unset), naming, and write all run in the

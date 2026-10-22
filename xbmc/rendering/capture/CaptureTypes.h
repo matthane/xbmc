@@ -58,6 +58,13 @@ enum class CaptureFormat
   NATIVE, //!< the output surface's coding at its native depth
 };
 
+//! The screenshot type a platform builds; captures other than screenshots leave it NONE
+enum class CaptureScreenshot
+{
+  NONE,
+  STANDARD, //!< what the user sees
+};
+
 struct CaptureSpec
 {
   CaptureContent content{CaptureContent::COMPOSITE};
@@ -66,6 +73,7 @@ struct CaptureSpec
   unsigned int width{0};
   unsigned int height{0};
   CaptureFormat format{CaptureFormat::BGRA8};
+  CaptureScreenshot screenshot{CaptureScreenshot::NONE};
 };
 
 struct CaptureResult
