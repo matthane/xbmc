@@ -614,7 +614,7 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
   const bool opaque = (format & XB_FMT_OPAQUE) != 0;
   const unsigned int baseFormat = format & XB_FMT_MASK;
   if (baseFormat != XB_FMT_A8R8G8B8 && baseFormat != XB_FMT_RGBA8 && baseFormat != XB_FMT_RGBA16 &&
-      baseFormat != XB_FMT_X2BGR10 && baseFormat != XB_FMT_RGB16BE)
+      baseFormat != XB_FMT_X2BGR10 && baseFormat != XB_FMT_RGB16BE && baseFormat != XB_FMT_RGB8)
   {
     CLog::Log(LOGERROR, "Supplied format: {} is not supported.", format);
     return false;
@@ -625,6 +625,7 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
 
   // XB_FMT_OPAQUE 16-bit sources carry undefined alpha; RGB48 output drops it
   const AVPixelFormat fmt16bit = opaque ? AV_PIX_FMT_RGB48BE : AV_PIX_FMT_RGBA64BE;
+  const AVPixelFormat fmt8bit = opaque ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_RGBA;
 
   bool jpg_output = false;
   if (m_strMimeType == "image/jpeg" || m_strMimeType == "image/jpg")
@@ -658,7 +659,7 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
   tdm.avOutctx->width = width;
   tdm.avOutctx->time_base.num = 1;
   tdm.avOutctx->time_base.den = 1;
-  tdm.avOutctx->pix_fmt = jpg_output ? AV_PIX_FMT_YUVJ420P : is16bit ? fmt16bit : AV_PIX_FMT_RGBA;
+  tdm.avOutctx->pix_fmt = jpg_output ? AV_PIX_FMT_YUVJ420P : is16bit ? fmt16bit : fmt8bit;
   tdm.avOutctx->flags = AV_CODEC_FLAG_QSCALE;
   tdm.avOutctx->mb_lmin = tdm.avOutctx->qmin * FF_QP2LAMBDA;
   tdm.avOutctx->mb_lmax = tdm.avOutctx->qmax * FF_QP2LAMBDA;
@@ -691,7 +692,7 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
 
   AVPixelFormat intermediateFmt = jpg_output ? AV_PIX_FMT_YUV420P
                                   : is16bit  ? fmt16bit
-                                             : AV_PIX_FMT_RGBA;
+                                             : fmt8bit;
   // a refcounted frame is passed to the encoder without a copy
   tdm.frame_input->format = intermediateFmt;
   tdm.frame_input->width = width;
@@ -715,6 +716,9 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
       break;
     case XB_FMT_RGB16BE:
       srcFmt = AV_PIX_FMT_RGB48BE;
+      break;
+    case XB_FMT_RGB8:
+      srcFmt = AV_PIX_FMT_RGB24;
       break;
     default: // XB_FMT_A8R8G8B8
       srcFmt = opaque ? AV_PIX_FMT_BGR0 : AV_PIX_FMT_RGB32;
