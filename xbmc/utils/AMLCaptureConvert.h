@@ -37,6 +37,8 @@ struct AMLCaptureColor
   AMLCaptureSignal signal{AMLCaptureSignal::SDR};
   //! the source luminance of the SDR tonemap in cd/m2
   float luminance{0.0f};
+  //! an output mode display-mapped the signal, so it is not the content
+  bool displayMapped{false};
 };
 
 //! The coding of an R'G'B' image: SDR BT.709, or BT.2020 with SDR white at whiteNits
@@ -121,6 +123,21 @@ public:
                const AMLCaptureImage& dst,
                const AMLCaptureImage* gui = nullptr,
                const AMLCaptureImage* sdr = nullptr);
+
+  //! Unpack the full pack src to dst, an AV_PIX_FMT_RGB48BE image of the same size, in the
+  //! signal's own coding without the tonemap: SDR, PQ and HLG as vdin1 holds them, Dolby Vision
+  //! decoded to PQ BT.2020.
+  static bool ConvertNative(const AMLCaptureImage& src,
+                            const AMLCaptureColor& color,
+                            const AMLCaptureImage& dst);
+  static AMLCaptureCoding::Transfer GetNativeTransfer(AMLCaptureSignal signal);
+  //! Recode a full-range R'G'B' pixel between two codings through linear light
+  static void Recode(const float in[3],
+                     const AMLCaptureCoding& from,
+                     const AMLCaptureCoding& to,
+                     float out[3]);
+  //! Scale src, a four-channel 8-bit image whose rows may run bottom-up, to the size of dst.
+  static bool Scale(const AMLCaptureImage& src, const AMLCaptureImage& dst);
 
   //! Map src, an AV_PIX_FMT_RGBA64LE image in an HDR coding, to SDR AV_PIX_FMT_RGBA of the same
   //! size by the inverse of the coding, as the GUI places SDR. Pixels where gui is clear are left.

@@ -20,6 +20,8 @@ namespace RENDERING
 namespace CAPTURE
 {
 
+struct CaptureResult;
+
 //! \brief Consumer-thread access to a capture's pixels regardless of producer:
 //! a GL readback backs it with a heap buffer, a direct-to-plane capture with a
 //! mapped dma-buf. Lock/Unlock bound the read so producer resources stay alive.
@@ -30,6 +32,9 @@ public:
   //! consumer thread: first row in memory; valid until the matching Unlock
   virtual const uint8_t* Lock() = 0;
   virtual void Unlock() {}
+  //! consumer thread, after Lock: describe the pixels in result where only their read could
+  //! tell; true when they hold a native screenshot
+  virtual bool Describe(CaptureResult& result) const { return false; }
 };
 
 //! RAII Lock/Unlock around ICapturePixels for one consumer read.
