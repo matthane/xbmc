@@ -613,13 +613,14 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
   const bool opaque = (format & XB_FMT_OPAQUE) != 0;
   const unsigned int baseFormat = format & XB_FMT_MASK;
   if (baseFormat != XB_FMT_A8R8G8B8 && baseFormat != XB_FMT_RGBA8 && baseFormat != XB_FMT_RGBA16 &&
-      baseFormat != XB_FMT_X2BGR10)
+      baseFormat != XB_FMT_X2BGR10 && baseFormat != XB_FMT_RGB16BE)
   {
     CLog::Log(LOGERROR, "Supplied format: {} is not supported.", format);
     return false;
   }
 
-  bool is16bit = (baseFormat == XB_FMT_RGBA16 || baseFormat == XB_FMT_X2BGR10);
+  bool is16bit =
+      (baseFormat == XB_FMT_RGBA16 || baseFormat == XB_FMT_X2BGR10 || baseFormat == XB_FMT_RGB16BE);
 
   // XB_FMT_OPAQUE 16-bit sources carry undefined alpha; RGB48 output drops it
   const AVPixelFormat fmt16bit = opaque ? AV_PIX_FMT_RGB48BE : AV_PIX_FMT_RGBA64BE;
@@ -704,26 +705,42 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
     case XB_FMT_X2BGR10:
       srcFmt = AV_PIX_FMT_X2BGR10LE;
       break;
+    case XB_FMT_RGB16BE:
+      srcFmt = AV_PIX_FMT_RGB48BE;
+      break;
     default: // XB_FMT_A8R8G8B8
       srcFmt = opaque ? AV_PIX_FMT_BGR0 : AV_PIX_FMT_RGB32;
       break;
   }
 
-  if (av_frame_get_buffer(tdm.frame_input, 0) < 0)
+  // input in the encoder's format is lent to it as is; it outlives the codec context
+  const bool lend = srcFmt == intermediateFmt && srcStride[0] > 0;
+  if (lend)
+  {
+    tdm.frame_input->buf[0] = av_buffer_create(
+        bufferin, static_cast<size_t>(pitch) * height, [](void*, uint8_t*) {}, nullptr,
+        AV_BUFFER_FLAG_READONLY);
+    tdm.frame_input->data[0] = bufferin;
+    tdm.frame_input->linesize[0] = srcStride[0];
+  }
+  if (lend ? !tdm.frame_input->buf[0] : av_frame_get_buffer(tdm.frame_input, 0) < 0)
   {
     CLog::Log(LOGERROR, "Could not fill picture for thumbnail: {}", destFile);
     CleanupLocalOutputBuffer();
     return false;
   }
 
-  // SWS_ACCURATE_RND skips RGB->YUV fast paths that ignore the range set below
-  tdm.sws = sws_getContext(width, height, srcFmt, width, height, intermediateFmt,
-                           jpg_output ? SWS_ACCURATE_RND : 0, nullptr, nullptr, nullptr);
-  if (!tdm.sws)
+  if (!lend)
   {
-    CLog::Log(LOGERROR, "Could not setup scaling context for thumbnail: {}", destFile);
-    CleanupLocalOutputBuffer();
-    return false;
+    // SWS_ACCURATE_RND skips RGB->YUV fast paths that ignore the range set below
+    tdm.sws = sws_getContext(width, height, srcFmt, width, height, intermediateFmt,
+                             jpg_output ? SWS_ACCURATE_RND : 0, nullptr, nullptr, nullptr);
+    if (!tdm.sws)
+    {
+      CLog::Log(LOGERROR, "Could not setup scaling context for thumbnail: {}", destFile);
+      CleanupLocalOutputBuffer();
+      return false;
+    }
   }
 
   // Setup jpeg range for sws
@@ -749,8 +766,8 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
     }
   }
 
-  if (sws_scale(tdm.sws, src, srcStride, 0, height, tdm.frame_input->data,
-                tdm.frame_input->linesize) < 0)
+  if (!lend && sws_scale(tdm.sws, src, srcStride, 0, height, tdm.frame_input->data,
+                         tdm.frame_input->linesize) < 0)
   {
     CLog::Log(LOGERROR, "SWS_SCALE failed for thumbnail: {}", destFile);
     CleanupLocalOutputBuffer();
