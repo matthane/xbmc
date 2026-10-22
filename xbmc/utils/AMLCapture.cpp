@@ -217,10 +217,13 @@ public:
                                                             m_spec.height * 4);
     const AMLCaptureImage dst = AMLCaptureImage::Packed(
         AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
-    const bool ok = session->Read(
-        m_streamWidth, m_streamHeight,
-        [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
-        { return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect), frame.color, dst); });
+    const bool ok =
+        session->Read(m_streamWidth, m_streamHeight,
+                      [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                      {
+                        return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
+                                               frame.color, AMLCaptureCoding(), dst);
+                      });
 
     if (ok)
       m_buffer = std::move(buffer);
