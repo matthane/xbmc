@@ -27,6 +27,7 @@ extern "C"
 #include <libavutil/avutil.h>
 #include <libavutil/display.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
@@ -665,6 +666,13 @@ bool CFFmpegImage::CreateThumbnailFromSurface(unsigned char* bufferin, unsigned 
       CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_imageQualityJpeg;
   tdm.avOutctx->global_quality =
       jpg_output ? quality * FF_QP2LAMBDA : tdm.avOutctx->qmin * FF_QP2LAMBDA;
+  // deflate dominates the encode of a capture; level 1 on the up filter trades
+  // a quarter more size for most of the time
+  if (opaque && !jpg_output)
+  {
+    tdm.avOutctx->compression_level = 1;
+    av_opt_set(tdm.avOutctx->priv_data, "pred", "up", 0);
+  }
 
   if (avcodec_open2(tdm.avOutctx, tdm.codec, NULL) < 0)
   {
