@@ -8,7 +8,9 @@
 #pragma once
 
 #include "guilib/DispResource.h"
+#include "rendering/capture/CaptureTypes.h"
 #include "utils/AMLCaptureConvert.h"
+#include "utils/Geometry.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -34,6 +36,15 @@ struct AMLCaptureFrame
 {
   AMLCaptureImage image;
   AMLCaptureColor color;
+};
+
+struct AMLCaptureVideoSpec
+{
+  int width{0};
+  int height{0};
+  //! the visible video, normalized to the output; vdin1 holds it at the frame origin
+  CRect rect;
+  bool continuous{false};
 };
 
 //! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
@@ -62,7 +73,13 @@ public:
 
   void Configure(const AMLCaptureSource& source);
   void SetPresented();
+  //! the renderer releases the session: no video is presented
+  void ClearPresented() { m_presented = false; }
   bool IsPresented() const { return m_presented; }
+  //! Render thread: the video destination in GUI coordinates
+  void SetVideoRect(const CRect& rect);
+  //! Render thread: the video destination on screen, normalized to the output
+  CRect GetVisibleRect();
 
   //! Keeps the stream running until the last lease is released. A continuous consumer passes
   //! the stream size it reads at, which the stream keeps while the lease lasts.
@@ -72,6 +89,13 @@ public:
   //! continuous size when larger, else wait for the next one, and run `use` on it. A size change
   //! restarts the stream. A wait ends after a bound of output frame periods.
   bool Read(int width, int height, const ReadFunc& use);
+
+  //! The crop of an NV12 image to a normalized rect, on even pixels for the chroma plane
+  static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
+
+  //! Deferred sRGB BGRA pixels of the visible video in result.
+  void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
+                         KODI::RENDERING::CAPTURE::CaptureResult& result);
 
 private:
   class CStream;
@@ -99,6 +123,7 @@ private:
   AMLCaptureSource m_source;
   //! the frame metadata the title peak in m_source was decoded from
   std::shared_ptr<const AMLFrameMetadata> m_staticsMeta;
+  CRect m_videoRect;
   std::atomic<bool> m_presented{false};
 
   //! serializes consumers; held across the frame wait, never taken by Stop

@@ -46,6 +46,18 @@ struct AMLCaptureImage
   int height{0};
   uint8_t* data[2]{};
   int linesize[2]{};
+
+  static AMLCaptureImage Packed(
+      AVPixelFormat format, int width, int height, uint8_t* data, int linesize)
+  {
+    AMLCaptureImage image;
+    image.format = format;
+    image.width = width;
+    image.height = height;
+    image.data[0] = data;
+    image.linesize[0] = linesize;
+    return image;
+  }
 };
 
 //! A buffer kept between calls whose growth leaves the new elements uninitialized
