@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -36,6 +37,19 @@ struct AMLCaptureColor
   AMLCaptureSignal signal{AMLCaptureSignal::SDR};
   //! the source luminance of the SDR tonemap in cd/m2
   float luminance{0.0f};
+};
+
+//! The coding of an R'G'B' image: SDR BT.709, or BT.2020 with SDR white at whiteNits
+struct AMLCaptureCoding
+{
+  enum class Transfer
+  {
+    SDR,
+    PQ,
+    HLG,
+  };
+  Transfer transfer{Transfer::SDR};
+  float whiteNits{0.0f};
 };
 
 //! A view of pixels the caller owns; NV12 uses both planes, packed formats only the first.
@@ -90,10 +104,33 @@ public:
   CAMLCaptureConvert& operator=(const CAMLCaptureConvert&) = delete;
 
   //! Copy the NV12 image src out of its mapping, scale it to the size of dst and convert it to
-  //! SDR AV_PIX_FMT_BGRA, tonemapping HDR.
+  //! SDR, tonemapping HDR, then to coding as the GUI places SDR. dst is AV_PIX_FMT_BGRA or
+  //! AV_PIX_FMT_RGBA64LE. Where gui, a premultiplied 8-bit overlay of the size of dst, is clear,
+  //! the pixel goes to sdr, AV_PIX_FMT_RGBA of that size, in SDR instead.
   bool Convert(const AMLCaptureImage& src,
                const AMLCaptureColor& color,
-               const AMLCaptureImage& dst);
+               const AMLCaptureCoding& coding,
+               const AMLCaptureImage& dst,
+               const AMLCaptureImage* gui = nullptr,
+               const AMLCaptureImage* sdr = nullptr);
+
+  //! Map src, an AV_PIX_FMT_RGBA64LE image in an HDR coding, to SDR AV_PIX_FMT_RGBA of the same
+  //! size by the inverse of the coding, as the GUI places SDR. Pixels where gui is clear are left.
+  void MapToSdr(const AMLCaptureImage& src,
+                const AMLCaptureCoding& coding,
+                const AMLCaptureImage& dst,
+                const AMLCaptureImage* gui);
+
+  //! A premultiplied 8-bit pixel that leaves what is under it unchanged
+  static bool IsClear(const uint8_t* pixel)
+  {
+    uint32_t value = 0;
+    std::memcpy(&value, pixel, sizeof(value));
+    return value == 0;
+  }
+
+  //! An AV_PIX_FMT_RGBA64LE work image of width x height, reused between calls.
+  AMLCaptureImage GetCompositeImage(int width, int height);
 
 private:
   bool Stage(const AMLCaptureImage& src, int width, int height);
@@ -102,6 +139,7 @@ private:
   SwsContext* m_scaleContext{nullptr};
   CAMLCaptureScratch<uint8_t> m_source;
   CAMLCaptureScratch<uint16_t> m_yuv;
+  CAMLCaptureScratch<uint16_t> m_composite;
   std::vector<float> m_toneMap;
   float m_toneMapLuminance{0.0f};
 };

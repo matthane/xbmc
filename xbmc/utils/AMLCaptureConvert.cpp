@@ -85,6 +85,14 @@ constexpr double HLG_C = 0.55991073;
 constexpr double HLG_GAMMA = 1.2;
 constexpr double HLG_PEAK_NITS = 1000.0;
 constexpr double HLG_SCENE_SCALE = 12.0;
+constexpr double HLG_MIN_LUMA = 1e-6;
+
+// IEC 61966-2-1, the coding of the GUI
+constexpr double SRGB_THRESHOLD = 0.04045;
+constexpr double SRGB_LINEAR_THRESHOLD = 0.0031308;
+constexpr double SRGB_SLOPE = 12.92;
+constexpr double SRGB_OFFSET = 0.055;
+constexpr double SRGB_GAMMA = 2.4;
 
 // Kodi's default video tonemap curve: Hable at parameter 1.0 (CMediaSettings), as the GLES video
 // shader applies it (YUV2RGBShaderGLES.cpp, gles_tonemap.frag, gles_yuv2rgb_basic.frag)
@@ -144,6 +152,24 @@ double PQToLinear(double e)
   return std::pow(std::max(p - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * p), 1 / PQ_M1);
 }
 
+double LinearToPQ(double l)
+{
+  const double y = std::pow(std::max(l, 0.0), PQ_M1);
+  return std::pow((PQ_C1 + PQ_C2 * y) / (1 + PQ_C3 * y), PQ_M2);
+}
+
+double SrgbToLinear(double v)
+{
+  return v <= SRGB_THRESHOLD ? v / SRGB_SLOPE
+                             : std::pow((v + SRGB_OFFSET) / (1 + SRGB_OFFSET), SRGB_GAMMA);
+}
+
+double LinearToSrgb(double l)
+{
+  return l <= SRGB_LINEAR_THRESHOLD ? l * SRGB_SLOPE
+                                    : (1 + SRGB_OFFSET) * std::pow(l, 1 / SRGB_GAMMA) - SRGB_OFFSET;
+}
+
 double HlgToScene(double e)
 {
   return e <= 0.5 ? e * e / 3 : (std::exp((e - HLG_C) / HLG_A) + HLG_B) / HLG_SCENE_SCALE;
@@ -172,6 +198,20 @@ double Hable(double x)
 double HlgSystemGain(double luma)
 {
   return std::pow(luma, HLG_GAMMA - 1) * HLG_PEAK_NITS / PQ_PEAK_NITS;
+}
+
+// the inverse OOTF gain by the luma of linear light at the PQ peak, to scene light at 1.0 for
+// the HLG maximum
+double HlgInverseGain(double luma)
+{
+  const double display = PQ_PEAK_NITS / HLG_PEAK_NITS;
+  return display * std::pow(std::max(HLG_MIN_LUMA, luma * display), (1 - HLG_GAMMA) / HLG_GAMMA);
+}
+
+double SceneToHlg(double v)
+{
+  const double scene = v * HLG_SCENE_SCALE;
+  return scene < 1 ? 0.5 * std::sqrt(scene) : HLG_A * std::log(scene - HLG_B) + HLG_C;
 }
 
 // one entry past the end, so a lookup at 1.0 interpolates without a bounds check
@@ -215,8 +255,13 @@ float LookupLog(const float* table, float linear)
 struct Tables
 {
   std::vector<float> pqToLinear = MakeTable(PQ_EOTF_STEPS, PQToLinear);
+  std::vector<float> linearToPQLog = MakeLogTable(LinearToPQ);
+  std::vector<float> srgbToLinear = MakeTable(TABLE_STEPS, SrgbToLinear);
+  std::vector<float> linearToSrgbLog = MakeLogTable(LinearToSrgb);
   std::vector<float> hlgToScene = MakeTable(TABLE_STEPS, HlgToScene);
   std::vector<float> hlgSystemGain = MakeLogTable(HlgSystemGain);
+  std::vector<float> hlgInverseGain = MakeLogTable(HlgInverseGain);
+  std::vector<float> sceneToHlg = MakeLogTable(SceneToHlg);
   std::vector<float> linearToBt1886 = MakeLogTable(LinearToBt1886);
   std::vector<float> linearToSdr = MakeLogTable(LinearToSdr);
 };
@@ -320,6 +365,15 @@ void ApplyRow(const Matrix& m, const Planes& p, int width)
   }
 }
 
+Matrix ScaleMatrix(const Matrix& m, double scale)
+{
+  Matrix out = m;
+  for (auto& row : out)
+    for (double& v : row)
+      v *= scale;
+  return out;
+}
+
 void YccRow(const uint16_t* y,
             const uint16_t* cb,
             const uint16_t* cr,
@@ -376,6 +430,24 @@ void HlgRowToLinear(const Tables& tables, const Planes& p, int width)
   }
 }
 
+// the GUI composite's HLG coding (gles_gui_composite.frag)
+void LinearRowToHlg(const Tables& tables, const Planes& p, int width)
+{
+  const float* gain = tables.hlgInverseGain.data();
+  const float* oetf = tables.sceneToHlg.data();
+  for (int x = 0; x < width; x++)
+  {
+    float linear[3];
+    for (int c = 0; c < 3; c++)
+      linear[c] = std::max(p[c][x], 0.0f);
+    const float luma =
+        BT2020_KR * linear[0] + (1 - BT2020_KR - BT2020_KB) * linear[1] + BT2020_KB * linear[2];
+    const float g = LookupLog(gain, luma);
+    for (int c = 0; c < 3; c++)
+      p[c][x] = LookupLog(oetf, linear[c] * g);
+  }
+}
+
 // R'G'B' of an SDR signal, else linear BT.2020; true for linear
 bool DecodeRow(AMLCaptureSignal signal,
                const uint16_t* y,
@@ -419,6 +491,11 @@ uint8_t To8(float v)
   return static_cast<uint8_t>(v * 255 + 0.5f);
 }
 
+uint16_t To16(float v)
+{
+  return static_cast<uint16_t>(v * 65535 + 0.5f);
+}
+
 // a row of planes to opaque 8-bit pixels, red at R and blue at B
 template<int R, int B>
 [[gnu::always_inline]] inline void StoreRow8(const Planes& p, int width, uint8_t* __restrict out)
@@ -433,6 +510,20 @@ template<int R, int B>
     out[B] = To8(std::clamp(blue[x], 0.0f, 1.0f));
     out[3] = 255;
   }
+}
+
+// the end of the run from x of pixels where the overlay gui is clear, or is not; without an overlay
+// the row is one run
+int RunEnd(const uint8_t* gui, int x, int width)
+{
+  if (!gui)
+    return width;
+
+  const bool clear = CAMLCaptureConvert::IsClear(gui + 4 * x);
+  int end = x + 1;
+  while (end < width && CAMLCaptureConvert::IsClear(gui + 4 * end) == clear)
+    end++;
+  return end;
 }
 
 } // namespace
@@ -492,10 +583,14 @@ bool CAMLCaptureConvert::Stage(const AMLCaptureImage& src, int width, int height
 
 bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
                                  const AMLCaptureColor& color,
-                                 const AMLCaptureImage& dst)
+                                 const AMLCaptureCoding& coding,
+                                 const AMLCaptureImage& dst,
+                                 const AMLCaptureImage* gui,
+                                 const AMLCaptureImage* sdr)
 {
+  const bool bgra = dst.format == AV_PIX_FMT_BGRA;
   if (src.format != AV_PIX_FMT_NV12 || src.width <= 0 || src.height <= 0 || dst.width <= 0 ||
-      dst.height <= 0 || dst.format != AV_PIX_FMT_BGRA)
+      dst.height <= 0 || (!bgra && dst.format != AV_PIX_FMT_RGBA64LE))
     return false;
 
   if (!Stage(src, dst.width, dst.height))
@@ -504,6 +599,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
   const std::size_t plane = static_cast<std::size_t>(dst.width) * dst.height;
   const std::vector<float>* toneMap = IsSdr(color.signal) ? nullptr : &GetToneMap(color.luminance);
   const Tables& tables = GetTables();
+  // an HDR coding holds the SDR video as the GUI shader places SDR
+  const Matrix sdrToLinear =
+      ScaleMatrix(BT709_TO_BT2020, static_cast<double>(coding.whiteNits) / PQ_PEAK_NITS);
   std::vector<float> rows(static_cast<std::size_t>(dst.width) * 3);
   const Planes p = {rows.data(), rows.data() + dst.width, rows.data() + 2 * dst.width};
   for (int y = 0; y < dst.height; y++)
@@ -515,7 +613,104 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
       ToneMapRow(tables.linearToSdr, *toneMap, p, dst.width);
     }
 
-    StoreRow8<2, 0>(p, dst.width, dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0]);
+    const uint8_t* overlay =
+        gui ? gui->data[0] + static_cast<std::ptrdiff_t>(y) * gui->linesize[0] : nullptr;
+    int x2 = 0;
+    for (int x1 = 0; x1 < dst.width; x1 = x2)
+    {
+      x2 = RunEnd(overlay, x1, dst.width);
+      const int width = x2 - x1;
+      const Planes span = {p[0] + x1, p[1] + x1, p[2] + x1};
+      if (overlay && IsClear(overlay + 4 * x1))
+      {
+        StoreRow8<0, 2>(span, width,
+                        sdr->data[0] + static_cast<std::ptrdiff_t>(y) * sdr->linesize[0] + x1 * 4);
+        continue;
+      }
+
+      if (coding.transfer != AMLCaptureCoding::Transfer::SDR)
+      {
+        for (float* v : span)
+          LookupRow(tables.srgbToLinear, v, width);
+        ApplyRow(sdrToLinear, span, width);
+        if (coding.transfer == AMLCaptureCoding::Transfer::PQ)
+        {
+          for (float* v : span)
+            LookupLogRow(tables.linearToPQLog, v, width);
+        }
+        else
+          LinearRowToHlg(tables, span, width);
+      }
+
+      uint8_t* row = dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0];
+      if (bgra)
+        StoreRow8<2, 0>(span, width, row + x1 * 4);
+      else
+      {
+        uint16_t* out = reinterpret_cast<uint16_t*>(row) + x1 * 4;
+        for (int x = 0; x < width; x++, out += 4)
+        {
+          for (int c = 0; c < 3; c++)
+            out[c] = To16(std::clamp(span[c][x], 0.0f, 1.0f));
+          out[3] = 65535;
+        }
+      }
+    }
   }
   return true;
+}
+
+void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
+                                  const AMLCaptureCoding& coding,
+                                  const AMLCaptureImage& dst,
+                                  const AMLCaptureImage* gui)
+{
+  const Tables& tables = GetTables();
+  const Matrix toSdr =
+      ScaleMatrix(BT2020_TO_BT709, PQ_PEAK_NITS / static_cast<double>(coding.whiteNits));
+  std::vector<float> rows(static_cast<std::size_t>(src.width) * 3);
+  const Planes p = {rows.data(), rows.data() + src.width, rows.data() + 2 * src.width};
+  for (int y = 0; y < src.height; y++)
+  {
+    const uint8_t* overlay =
+        gui ? gui->data[0] + static_cast<std::ptrdiff_t>(y) * gui->linesize[0] : nullptr;
+    int x2 = 0;
+    for (int x1 = 0; x1 < src.width; x1 = x2)
+    {
+      x2 = RunEnd(overlay, x1, src.width);
+      if (overlay && IsClear(overlay + 4 * x1))
+        continue;
+
+      const int width = x2 - x1;
+      const Planes span = {p[0] + x1, p[1] + x1, p[2] + x1};
+      const uint16_t* in = reinterpret_cast<const uint16_t*>(
+                               src.data[0] + static_cast<std::ptrdiff_t>(y) * src.linesize[0]) +
+                           x1 * 4;
+      for (int x = 0; x < width; x++)
+      {
+        for (int c = 0; c < 3; c++)
+          span[c][x] = in[4 * x + c] / 65535.0f;
+      }
+      if (coding.transfer == AMLCaptureCoding::Transfer::HLG)
+        HlgRowToLinear(tables, span, width);
+      else
+      {
+        for (float* v : span)
+          LookupRow(tables.pqToLinear, v, width);
+      }
+      ApplyRow(toSdr, span, width);
+      for (float* v : span)
+        LookupLogRow(tables.linearToSrgbLog, v, width);
+
+      StoreRow8<0, 2>(span, width,
+                      dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0] + x1 * 4);
+    }
+  }
+}
+
+AMLCaptureImage CAMLCaptureConvert::GetCompositeImage(int width, int height)
+{
+  m_composite.Resize(static_cast<std::size_t>(width) * height * 4);
+  return AMLCaptureImage::Packed(AV_PIX_FMT_RGBA64LE, width, height,
+                                 reinterpret_cast<uint8_t*>(m_composite.Data()), width * 8);
 }
