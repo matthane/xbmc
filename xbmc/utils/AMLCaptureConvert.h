@@ -112,8 +112,9 @@ public:
 
   //! Copy the NV12 image src out of its mapping, or unpack a full pack src, scale it to the size
   //! of dst and convert it to SDR, tonemapping HDR, then to coding as the GUI places SDR. dst is
-  //! AV_PIX_FMT_BGRA or AV_PIX_FMT_RGBA64LE. Where gui, a premultiplied 8-bit overlay of the size
-  //! of dst, is clear, the pixel goes to sdr, AV_PIX_FMT_RGBA of that size, in SDR instead.
+  //! AV_PIX_FMT_BGRA, AV_PIX_FMT_RGB24 or AV_PIX_FMT_RGBA64LE. Where gui, a premultiplied 8-bit
+  //! overlay of the size of dst, is clear, the pixel goes to sdr, AV_PIX_FMT_RGBA of that size,
+  //! in SDR instead.
   bool Convert(const AMLCaptureImage& src,
                const AMLCaptureColor& color,
                const AMLCaptureCoding& coding,

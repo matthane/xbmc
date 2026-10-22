@@ -189,12 +189,12 @@ void GetStreamSize(const CRect& crop, int width, int height, int& streamWidth, i
 }
 
 // width x height sRGB pixels
-void DescribeSdr(int width, int height, CaptureResult& result)
+void DescribeSdr(int width, int height, bool rgb, CaptureResult& result)
 {
   result.width = static_cast<unsigned int>(width);
   result.height = static_cast<unsigned int>(height);
-  result.stride = width * 4;
-  result.format = AV_PIX_FMT_BGRA;
+  result.stride = width * (rgb ? 3 : 4);
+  result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_BGRA;
   result.color.primaries = AVCOL_PRI_BT709;
   result.color.transfer = AVCOL_TRC_IEC61966_2_1;
   result.color.range = AVCOL_RANGE_JPEG;
@@ -229,10 +229,14 @@ public:
     if (!session)
       return nullptr;
 
+    // a standard screenshot is the rows of an 8-bit PNG
+    const bool rgb = m_spec.shot == CaptureScreenshot::STANDARD;
+    const int pixelBytes = rgb ? 3 : 4;
     auto buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_spec.width) *
-                                                            m_spec.height * 4);
-    const AMLCaptureImage dst = AMLCaptureImage::Packed(
-        AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
+                                                            m_spec.height * pixelBytes);
+    const AMLCaptureImage dst =
+        AMLCaptureImage::Packed(rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_BGRA, m_spec.width,
+                                m_spec.height, buffer.get(), m_spec.width * pixelBytes);
     const bool ok =
         session->ReadVideo(m_spec.shot, m_streamWidth, m_streamHeight,
                            [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
@@ -1192,7 +1196,7 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
   auto lease = spec.continuous ? Lease(AMLCaptureInput::VIDEO, width, height) : Lease();
   result.pixels =
       std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
-  DescribeSdr(spec.width, spec.height, result);
+  DescribeSdr(spec.width, spec.height, spec.shot == CaptureScreenshot::STANDARD, result);
   result.content = CaptureContent::VIDEO;
 }
 
@@ -1208,7 +1212,7 @@ void CAMLCapture::CreateGuiPixels(int width, int height, CaptureResult& result)
   auto lease = session->Lease(AMLCaptureInput::GUI, streamWidth, streamHeight);
   result.pixels = std::make_shared<CAMLGuiPixels>(session, std::move(lease), width, height,
                                                   streamWidth, streamHeight);
-  DescribeSdr(width, height, result);
+  DescribeSdr(width, height, false, result);
   result.content = CaptureContent::COMPOSITE;
   result.live = true;
 }

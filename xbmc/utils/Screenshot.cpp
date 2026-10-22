@@ -53,6 +53,8 @@ unsigned int CaptureXbFormat(AVPixelFormat format)
       return XB_FMT_A8R8G8B8;
     case AV_PIX_FMT_RGBA:
       return XB_FMT_RGBA8;
+    case AV_PIX_FMT_RGB24:
+      return XB_FMT_RGB8;
     case AV_PIX_FMT_RGBA64LE:
       return XB_FMT_RGBA16;
     case AV_PIX_FMT_X2BGR10LE:

@@ -124,7 +124,7 @@ public:
   //! The crop of an NV12 or full pack image to a normalized rect, on even pixels for the chroma
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
 
-  //! Deferred sRGB BGRA pixels of the visible video in result.
+  //! Deferred sRGB pixels of the visible video in result: BGRA, RGB24 for a STANDARD shot.
   void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
 
