@@ -577,19 +577,20 @@ uint16_t To16(float v)
   return static_cast<uint16_t>(v * 65535 + 0.5f);
 }
 
-// a row of planes to opaque 8-bit pixels, red at R and blue at B
-template<int R, int B>
+// a row of planes to 8-bit pixels of STEP bytes, red at R and blue at B, opaque at 4 bytes
+template<int R, int B, int STEP>
 [[gnu::always_inline]] inline void StoreRow8(const Planes& p, int width, uint8_t* __restrict out)
 {
   const float* __restrict red = p[0];
   const float* __restrict green = p[1];
   const float* __restrict blue = p[2];
-  for (int x = 0; x < width; x++, out += 4)
+  for (int x = 0; x < width; x++, out += STEP)
   {
     out[R] = To8(std::clamp(red[x], 0.0f, 1.0f));
     out[1] = To8(std::clamp(green[x], 0.0f, 1.0f));
     out[B] = To8(std::clamp(blue[x], 0.0f, 1.0f));
-    out[3] = 255;
+    if constexpr (STEP == 4)
+      out[3] = 255;
   }
 }
 
@@ -692,8 +693,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
                                  const AMLCaptureImage* sdr)
 {
   const bool bgra = dst.format == AV_PIX_FMT_BGRA;
+  const bool rgb = dst.format == AV_PIX_FMT_RGB24;
   if ((src.format != AV_PIX_FMT_NV12 && !src.fullPack) || src.width <= 0 || src.height <= 0 ||
-      dst.width <= 0 || dst.height <= 0 || (!bgra && dst.format != AV_PIX_FMT_RGBA64LE))
+      dst.width <= 0 || dst.height <= 0 || (!bgra && !rgb && dst.format != AV_PIX_FMT_RGBA64LE))
     return false;
 
   // a full pack at the output size is unpacked a row at a time, which spares the planes
@@ -732,8 +734,8 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
       const Planes span = {p[0] + x1, p[1] + x1, p[2] + x1};
       if (overlay && IsClear(overlay + 4 * x1))
       {
-        StoreRow8<0, 2>(span, width,
-                        sdr->data[0] + static_cast<std::ptrdiff_t>(y) * sdr->linesize[0] + x1 * 4);
+        StoreRow8<0, 2, 4>(
+            span, width, sdr->data[0] + static_cast<std::ptrdiff_t>(y) * sdr->linesize[0] + x1 * 4);
         continue;
       }
 
@@ -753,7 +755,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
 
       uint8_t* row = dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0];
       if (bgra)
-        StoreRow8<2, 0>(span, width, row + x1 * 4);
+        StoreRow8<2, 0, 4>(span, width, row + x1 * 4);
+      else if (rgb)
+        StoreRow8<0, 2, 3>(span, width, row + x1 * 3);
       else
       {
         uint16_t* out = reinterpret_cast<uint16_t*>(row) + x1 * 4;
@@ -811,8 +815,8 @@ void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
       for (float* v : span)
         LookupLogRow(tables.linearToSrgbLog, v, width);
 
-      StoreRow8<0, 2>(span, width,
-                      dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0] + x1 * 4);
+      StoreRow8<0, 2, 4>(span, width,
+                         dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0] + x1 * 4);
     }
   }
 }

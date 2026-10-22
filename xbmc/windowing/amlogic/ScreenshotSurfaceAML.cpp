@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <mutex>
 
 using namespace KODI::RENDERING::CAPTURE;
@@ -29,6 +28,30 @@ constexpr int FULL_SPAN_8 = 255;
 constexpr int CODE_SPAN_8_TO_16 = 257;
 // the GUI composite peak is PQ-normalized luminance
 constexpr float PQ_PEAK_NITS = 10000.0f;
+
+// 16-bit RGBA codes to 8-bit pixels of STEP bytes
+template<int STEP>
+void Quantize(const uint16_t* in, int pixels, uint8_t* out)
+{
+  for (int i = 0; i < pixels; i++, in += 4, out += STEP)
+  {
+    for (int c = 0; c < STEP; c++)
+      out[c] = static_cast<uint8_t>((in[c] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+  }
+}
+
+// 8-bit RGBA pixels repacked in place to STEP bytes
+template<int STEP>
+void Repack(uint8_t* pixels, int count)
+{
+  const uint8_t* in = pixels;
+  uint8_t* out = pixels;
+  for (int i = 0; i < count; i++, in += 4, out += STEP)
+  {
+    for (int c = 0; c < 3; c++)
+      out[c] = in[c];
+  }
+}
 
 // a normalized coordinate in pixels
 int Edge(float v, int pixels)
@@ -130,7 +153,6 @@ private:
   {
     const int width = m_gui.width;
     const int height = m_gui.height;
-    const size_t size = static_cast<size_t>(width) * height * 4;
 
     const AMLCaptureCoding& coding = m_gui.coding;
     const AMLCaptureImage image = convert.GetCompositeImage(width, height);
@@ -196,29 +218,42 @@ private:
       }
     }
 
+    const int pixels = width * height;
     if (!hdr)
     {
-      for (size_t i = 0; i < size; i++)
-        m_buffer[i] =
-            static_cast<uint8_t>((composite[i] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+      if (IsRgb())
+        Quantize<3>(composite, pixels, m_buffer.get());
+      else
+        Quantize<4>(composite, pixels, m_buffer.get());
       return true;
     }
 
     convert.MapToSdr(image, coding, dst, &overlay);
+
+    if (IsRgb())
+      Repack<3>(m_buffer.get(), pixels);
     return true;
   }
 
+  // a standard screenshot is the rows of an 8-bit PNG
+  bool IsRgb() const { return m_gui.shot == CaptureScreenshot::STANDARD; }
+
   void CopyGui()
   {
+    const int step = IsRgb() ? 3 : 4;
+    const int r = m_gui.bgra ? 2 : 0;
+    const int b = m_gui.bgra ? 0 : 2;
+    uint8_t* out = m_buffer.get();
     for (int y = 0; y < m_gui.height; y++)
     {
       const uint8_t* gui = m_gui.Row(y);
-      uint8_t* out = m_buffer.get() + static_cast<size_t>(y) * m_gui.width * 4;
-      std::memcpy(out, gui, static_cast<size_t>(m_gui.width) * 4);
-      if (m_gui.bgra)
+      for (int x = 0; x < m_gui.width; x++, gui += 4, out += step)
       {
-        for (int x = 0; x < m_gui.width; x++)
-          std::swap(out[x * 4], out[x * 4 + 2]);
+        out[0] = gui[r];
+        out[1] = gui[1];
+        out[2] = gui[b];
+        if (step == 4)
+          out[3] = gui[3];
       }
     }
   }
@@ -284,11 +319,12 @@ void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& r
   CAMLCapture::GetCaptureSize(gui.streamWidth, gui.streamHeight);
   gui.shot = spec.screenshot;
 
+  const bool rgb = spec.screenshot == CaptureScreenshot::STANDARD;
   result.pixels = std::make_shared<CAMLCompositePixels>(session, session->Lease(), std::move(gui));
   result.width = static_cast<unsigned int>(m_width);
   result.height = static_cast<unsigned int>(m_height);
-  result.stride = m_width * 4;
-  result.format = AV_PIX_FMT_RGBA;
+  result.stride = m_width * (rgb ? 3 : 4);
+  result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_RGBA;
   result.color.primaries = AVCOL_PRI_BT709;
   result.color.transfer = AVCOL_TRC_IEC61966_2_1;
   result.color.range = AVCOL_RANGE_JPEG;
