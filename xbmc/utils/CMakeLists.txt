@@ -261,10 +261,8 @@ if("gbm" IN_LIST CORE_PLATFORM_NAME_LC OR "wayland" IN_LIST CORE_PLATFORM_NAME_L
 endif()
 
 if(TARGET ${APP_NAME_LC}::AML)
-  list(APPEND SOURCES AMLUtils.cpp
-                      ScreenshotAML.cpp)
-  list(APPEND HEADERS AMLUtils.h
-                      ScreenshotAML.h)
+  list(APPEND SOURCES AMLUtils.cpp)
+  list(APPEND HEADERS AMLUtils.h)
 endif()
 
 core_add_library(utils)

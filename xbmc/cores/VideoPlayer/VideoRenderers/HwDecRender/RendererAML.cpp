@@ -16,7 +16,6 @@
 #include "settings/AdvancedSettings.h"
 #include "settings/MediaSettings.h"
 #include "utils/AMLUtils.h"
-#include "utils/ScreenshotAML.h"
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
