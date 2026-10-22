@@ -118,8 +118,12 @@ public:
 
 private:
   class CStream;
+  using StreamFunc =
+      std::function<bool(CStream& stream, unsigned int index, const AMLCaptureFrame& frame)>;
 
   void ReleaseLease(AMLCaptureInput input, int width, int height);
+  //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
+  bool ReadStream(AMLCaptureInput input, int width, int height, const StreamFunc& use);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
   //! takes m_stream for Close; m_lock must be held
