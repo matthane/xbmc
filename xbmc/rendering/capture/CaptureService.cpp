@@ -205,7 +205,7 @@ void CCaptureService::FrameComplete()
     {
       if (request->state != CaptureState::LATCHED)
         continue;
-      if (!request->served)
+      if (!request->served && request->spec.cadence == CaptureCadence::ONESHOT)
         unserved = request;
       break; // at most one request is latched per frame
     }
