@@ -28,7 +28,9 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -91,6 +93,7 @@ struct AMLCaptureDevice
 {
   std::string path;
   int input{-1};
+  int guiInput{-1};
 };
 
 AMLCaptureDevice Discover()
@@ -123,6 +126,8 @@ AMLCaptureDevice Discover()
           device.path = path;
           device.input = static_cast<int>(input.index);
         }
+        else if (inputName == "VIU1_WB0_OSD1")
+          device.guiInput = static_cast<int>(input.index);
       }
     }
     close(fd);
@@ -131,8 +136,8 @@ AMLCaptureDevice Discover()
   }
 
   if (device.input >= 0)
-    CLog::Log(LOGINFO, "CAMLCapture::{}: video capture on {} input {}", __FUNCTION__, device.path,
-              device.input);
+    CLog::Log(LOGINFO, "CAMLCapture::{}: video capture on {} input {}, GUI input {}", __FUNCTION__,
+              device.path, device.input, device.guiInput);
   else
     CLog::Log(LOGINFO, "CAMLCapture::{}: no vdin1 video capture node", __FUNCTION__);
   return device;
@@ -218,7 +223,7 @@ public:
     const AMLCaptureImage dst = AMLCaptureImage::Packed(
         AV_PIX_FMT_BGRA, m_spec.width, m_spec.height, buffer.get(), m_spec.width * 4);
     const bool ok =
-        session->Read(m_streamWidth, m_streamHeight,
+        session->Read(AMLCaptureInput::VIDEO, m_streamWidth, m_streamHeight,
                       [this, &dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
                       {
                         return convert.Convert(CAMLCapture::Crop(frame.image, m_spec.rect),
@@ -241,8 +246,92 @@ private:
   std::unique_ptr<uint8_t[]> m_buffer;
 };
 
+class CAMLGuiPixels : public ICapturePixels
+{
+public:
+  CAMLGuiPixels(std::shared_ptr<CAMLCapture> session,
+                std::shared_ptr<void> lease,
+                int width,
+                int height,
+                int streamWidth,
+                int streamHeight)
+    : m_session(std::move(session)),
+      m_lease(std::move(lease)),
+      m_width(width),
+      m_height(height),
+      m_streamWidth(streamWidth),
+      m_streamHeight(streamHeight)
+  {
+  }
+
+  // every Lock reads a new frame, so a consumer is served while the GUI draws nothing; the
+  // buffer holds it until Unlock
+  const uint8_t* Lock() override
+  {
+    m_lock.lock();
+
+    if (!m_buffer)
+      m_buffer = std::make_unique<uint8_t[]>(static_cast<size_t>(m_width) * m_height * 4);
+    const AMLCaptureImage dst =
+        AMLCaptureImage::Packed(AV_PIX_FMT_BGRA, m_width, m_height, m_buffer.get(), m_width * 4);
+
+    const bool ok =
+        m_session->Read(AMLCaptureInput::GUI, m_streamWidth, m_streamHeight,
+                        [&dst](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert) {
+                          return convert.Convert(frame.image, frame.color, AMLCaptureCoding(), dst);
+                        });
+    return ok ? m_buffer.get() : nullptr;
+  }
+
+  void Unlock() override { m_lock.unlock(); }
+
+private:
+  // the lease ends first, so the stream closes before the session can go
+  std::shared_ptr<CAMLCapture> m_session;
+  std::shared_ptr<void> m_lease;
+  int m_width{0};
+  int m_height{0};
+  int m_streamWidth{0};
+  int m_streamHeight{0};
+  std::mutex m_lock;
+  std::unique_ptr<uint8_t[]> m_buffer;
+};
+
+using OutputMode = std::tuple<int, int, float, uint32_t>;
+
+OutputMode GetOutputMode()
+{
+  const RESOLUTION_INFO screen = CServiceBroker::GetWinSystem()->GetGfxContext().GetResInfo();
+  return {screen.iScreenWidth, screen.iScreenHeight, screen.fRefreshRate, screen.dwFlags};
+}
+
 std::mutex s_sessionLock;
 std::weak_ptr<CAMLCapture> s_session;
+//! the output mode in which vdin1 gave no GUI, until the next display reset; it outlives sessions
+std::mutex s_guiLock;
+std::optional<OutputMode> s_guiRefusedMode;
+
+bool IsGuiRefused()
+{
+  const OutputMode mode = GetOutputMode();
+
+  std::lock_guard lock(s_guiLock);
+
+  return s_guiRefusedMode == mode;
+}
+
+void RefuseGui()
+{
+  const OutputMode mode = GetOutputMode();
+
+  std::lock_guard lock(s_guiLock);
+
+  if (s_guiRefusedMode == mode)
+    return;
+  s_guiRefusedMode = mode;
+  CLog::Log(LOGINFO, "CAMLCapture::{}: no GUI from vdin1 at {}x{}, scaled GUI captures fail",
+            __FUNCTION__, std::get<0>(mode), std::get<1>(mode));
+}
 
 } // namespace
 
@@ -256,12 +345,18 @@ public:
     TIMEOUT,
   };
 
-  //! failures log at `logLevel`; `busy` tells whether another vdin1 user holds the node
-  static std::shared_ptr<CStream> Open(int width, int height, int logLevel, bool& busy);
+  //! failures log at `logLevel`; `busy` tells whether another vdin1 user holds the node, `refused`
+  //! whether vdin1 cannot give this input at this size
+  static std::shared_ptr<CStream> Open(
+      AMLCaptureInput input, int width, int height, int logLevel, bool& busy, bool& refused);
   ~CStream();
 
   void Stop();
-  bool Matches(int width, int height) const { return width == m_width && height == m_height; }
+  AMLCaptureInput GetInput() const { return m_input; }
+  bool Matches(AMLCaptureInput input, int width, int height) const
+  {
+    return input == m_input && width == m_width && height == m_height;
+  }
   //! Takes the newest frame vdin1 finished since the last dequeue, false when there is none or
   //! when that dequeue is older than `maxAge`
   bool TakeNewest(std::chrono::milliseconds maxAge, unsigned int& index);
@@ -275,6 +370,7 @@ private:
 
   int m_fd{-1};
   int m_eventFd{-1};
+  AMLCaptureInput m_input{AMLCaptureInput::VIDEO};
   int m_width{0};
   int m_height{0};
   bool m_streaming{false};
@@ -283,17 +379,19 @@ private:
   std::chrono::steady_clock::time_point m_dequeued;
 };
 
-std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(int width,
-                                                                 int height,
-                                                                 int logLevel,
-                                                                 bool& busy)
+std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(
+    AMLCaptureInput input, int width, int height, int logLevel, bool& busy, bool& refused)
 {
   const AMLCaptureDevice& device = FindDevice();
-  int index = device.input;
-  if (index < 0)
+  int index = input == AMLCaptureInput::GUI ? device.guiInput : device.input;
+  if (device.input < 0 || index < 0)
+  {
+    refused = true;
     return {};
+  }
 
   auto stream = std::make_shared<CStream>();
+  stream->m_input = input;
   stream->m_width = width;
   stream->m_height = height;
   stream->m_fd = open(device.path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
@@ -308,6 +406,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(int width,
   if (ioctl(stream->m_fd, VIDIOC_S_INPUT, &index) < 0)
   {
     busy = errno == EBUSY;
+    refused = errno == EINVAL;
     if (!busy)
       CLog::Log(logLevel, "CAMLCapture::{}: input {} unavailable: {}", __FUNCTION__, index,
                 strerror(errno));
@@ -328,6 +427,7 @@ std::shared_ptr<CAMLCapture::CStream> CAMLCapture::CStream::Open(int width,
       format.fmt.pix_mp.plane_fmt[0].sizeimage < frameSize)
   {
     CLog::Log(logLevel, "CAMLCapture::{}: NV12 {}x{} refused", __FUNCTION__, width, height);
+    refused = true;
     return {};
   }
 
@@ -569,6 +669,8 @@ void CAMLCapture::OnResetDisplay()
   std::lock_guard lock(m_lock);
 
   m_displayLost = false;
+  std::lock_guard guiLock(s_guiLock);
+  s_guiRefusedMode.reset();
 }
 
 void CAMLCapture::Configure(const AMLCaptureSource& source)
@@ -628,30 +730,31 @@ void CAMLCapture::Close(std::shared_ptr<CStream> stream)
   m_closed.notify_all();
 }
 
-std::shared_ptr<void> CAMLCapture::Lease(int width, int height)
+std::shared_ptr<void> CAMLCapture::Lease(AMLCaptureInput input, int width, int height)
 {
   std::lock_guard lock(m_lock);
 
-  m_leases++;
+  m_leases[static_cast<size_t>(input)]++;
   if (width > 0 && height > 0)
-    m_continuousSizes.emplace_back(width, height);
+    m_continuousSizes.emplace_back(input, width, height);
   return std::shared_ptr<void>(nullptr,
-                               [weak = weak_from_this(), width, height](void*)
+                               [weak = weak_from_this(), input, width, height](void*)
                                {
                                  if (const auto session = weak.lock())
-                                   session->ReleaseLease(width, height);
+                                   session->ReleaseLease(input, width, height);
                                });
 }
 
-void CAMLCapture::ReleaseLease(int width, int height)
+void CAMLCapture::ReleaseLease(AMLCaptureInput input, int width, int height)
 {
   {
     std::lock_guard lock(m_lock);
     const auto it = std::find(m_continuousSizes.begin(), m_continuousSizes.end(),
-                              std::make_pair(width, height));
+                              std::make_tuple(input, width, height));
     if (it != m_continuousSizes.end())
       m_continuousSizes.erase(it);
-    if (--m_leases > 0 || !m_stream)
+    m_leases[static_cast<size_t>(input)]--;
+    if (!m_stream || m_leases[static_cast<size_t>(m_stream->GetInput())] > 0)
       return;
   }
 
@@ -663,7 +766,8 @@ void CAMLCapture::ReleaseLease(int width, int height)
         std::shared_ptr<CStream> stream;
         {
           std::lock_guard lock(session->m_lock);
-          if (session->m_leases > 0)
+          if (!session->m_stream ||
+              session->m_leases[static_cast<size_t>(session->m_stream->GetInput())] > 0)
             return;
           stream = session->TakeStream();
         }
@@ -671,15 +775,20 @@ void CAMLCapture::ReleaseLease(int width, int height)
       });
 }
 
-bool CAMLCapture::CanRead() const
+bool CAMLCapture::CanRead(AMLCaptureInput input) const
 {
   if (m_displayLost)
     return false;
+  if (input == AMLCaptureInput::GUI)
+    return !m_presented;
   return m_presented && !m_busy;
 }
 
-bool CAMLCapture::Read(int width, int height, const ReadFunc& use)
+bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadFunc& use)
 {
+  if (input == AMLCaptureInput::GUI && IsGuiRefused())
+    return false;
+
   std::lock_guard read(m_readLock);
 
   const float fps = CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS();
@@ -694,20 +803,25 @@ bool CAMLCapture::Read(int width, int height, const ReadFunc& use)
     std::shared_ptr<CStream> stale;
     AMLCaptureSource source;
     // the store lock is never taken under m_lock
-    AMLFrameMetadataPtr meta = CAMLFrameMetadataStore::GetInstance().Get();
+    AMLFrameMetadataPtr meta;
+    if (input == AMLCaptureInput::VIDEO)
+      meta = CAMLFrameMetadataStore::GetInstance().Get();
     {
       std::lock_guard lock(m_lock);
-      if (!CanRead())
+      if (!CanRead(input))
         return false;
-      for (const auto& [continuousWidth, continuousHeight] : m_continuousSizes)
+      for (const auto& [continuousInput, continuousWidth, continuousHeight] : m_continuousSizes)
       {
+        if (continuousInput != input)
+          continue;
         width = std::max(width, continuousWidth);
         height = std::max(height, continuousHeight);
       }
-      if (m_stream && !m_stream->Matches(width, height))
+      if (m_stream && !m_stream->Matches(input, width, height))
         stale = TakeStream();
       stream = m_stream;
-      UpdateStatics(std::move(meta));
+      if (input == AMLCaptureInput::VIDEO)
+        UpdateStatics(std::move(meta));
       source = m_source;
     }
     Close(std::move(stale));
@@ -717,23 +831,27 @@ bool CAMLCapture::Read(int width, int height, const ReadFunc& use)
       {
         std::unique_lock lock(m_lock);
         m_closed.wait(lock, [this] { return m_closing == 0; });
-        if (!CanRead())
+        if (!CanRead(input))
           return false;
       }
 
       bool busy = false;
+      bool refused = false;
       const int logLevel = m_openFailed ? LOGDEBUG : LOGWARNING;
-      stream = CStream::Open(width, height, logLevel, busy);
-      if (!busy)
+      stream = CStream::Open(input, width, height, logLevel, busy, refused);
+      if (refused && input == AMLCaptureInput::GUI)
+        RefuseGui();
+      else if (!busy)
         m_openFailed = !stream;
 
       std::lock_guard lock(m_lock);
-      if (busy && !m_busy)
+      bool& wasBusy = input == AMLCaptureInput::GUI ? m_guiBusy : m_busy;
+      if (busy && !wasBusy)
         CLog::Log(LOGWARNING, "CAMLCapture::{}: another vdin1 user holds the node", __FUNCTION__);
-      m_busy = busy;
+      wasBusy = busy;
       if (!stream)
         return false;
-      if (!CanRead())
+      if (!CanRead(input))
         return false;
       m_stream = stream;
     }
@@ -744,7 +862,9 @@ bool CAMLCapture::Read(int width, int height, const ReadFunc& use)
     if (wake == CStream::Wake::FRAME)
     {
       AMLCaptureFrame frame;
-      frame.color = GetSignal(source);
+      // with no video presented the GUI is SDR
+      if (input == AMLCaptureInput::VIDEO)
+        frame.color = GetSignal(source);
       frame.image = stream->Image(index);
       const bool ok = use(frame, m_convert);
       stream->Queue(index);
@@ -910,9 +1030,26 @@ void CAMLCapture::CreateVideoPixels(const AMLCaptureVideoSpec& spec, CaptureResu
   int width = 0;
   int height = 0;
   GetStreamSize(spec.rect, spec.width, spec.height, width, height);
-  auto lease = spec.continuous ? Lease(width, height) : Lease();
+  auto lease = spec.continuous ? Lease(AMLCaptureInput::VIDEO, width, height) : Lease();
   result.pixels =
       std::make_shared<CAMLVideoPixels>(weak_from_this(), std::move(lease), spec, width, height);
   DescribeSdr(spec.width, spec.height, result);
   result.content = CaptureContent::VIDEO;
+}
+
+void CAMLCapture::CreateGuiPixels(int width, int height, CaptureResult& result)
+{
+  if (IsGuiRefused())
+    return;
+
+  const auto session = Get();
+  int streamWidth = 0;
+  int streamHeight = 0;
+  GetStreamSize(CRect(0.0f, 0.0f, 1.0f, 1.0f), width, height, streamWidth, streamHeight);
+  auto lease = session->Lease(AMLCaptureInput::GUI, streamWidth, streamHeight);
+  result.pixels = std::make_shared<CAMLGuiPixels>(session, std::move(lease), width, height,
+                                                  streamWidth, streamHeight);
+  DescribeSdr(width, height, result);
+  result.content = CaptureContent::COMPOSITE;
+  result.live = true;
 }
