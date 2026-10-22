@@ -791,6 +791,13 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
 
   std::lock_guard read(m_readLock);
 
+  return ReadStream(input, width, height,
+                    [this, &use](CStream&, unsigned int, const AMLCaptureFrame& frame)
+                    { return use(frame, m_convert); });
+}
+
+bool CAMLCapture::ReadStream(AMLCaptureInput input, int width, int height, const StreamFunc& use)
+{
   const float fps = CServiceBroker::GetWinSystem()->GetGfxContext().GetFPS();
   const int waitMs =
       static_cast<int>(std::ceil(FRAME_WAIT_PERIODS * 1000.0f / std::max(fps, 1.0f)));
@@ -866,7 +873,7 @@ bool CAMLCapture::Read(AMLCaptureInput input, int width, int height, const ReadF
       if (input == AMLCaptureInput::VIDEO)
         frame.color = GetSignal(source);
       frame.image = stream->Image(index);
-      const bool ok = use(frame, m_convert);
+      const bool ok = use(*stream, index, frame);
       stream->Queue(index);
       return ok;
     }
