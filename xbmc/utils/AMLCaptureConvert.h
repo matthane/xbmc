@@ -52,6 +52,8 @@ struct AMLCaptureCoding
   float whiteNits{0.0f};
 };
 
+constexpr int AML_FULL_PACK_PAIR_BYTES = 5;
+
 //! A view of pixels the caller owns; NV12 uses both planes, packed formats only the first.
 struct AMLCaptureImage
 {
@@ -60,6 +62,11 @@ struct AMLCaptureImage
   int height{0};
   uint8_t* data[2]{};
   int linesize[2]{};
+  //! vdin1's 10-bit 4:2:2 full pack, which has no AVPixelFormat: each pixel pair is one
+  //! little-endian 40-bit group of Cb, Y, Cr and Y, 10 bits each
+  bool fullPack{false};
+  //! full pack chroma is the even pixel's, else the average of the pair
+  bool cositedChroma{false};
 
   static AMLCaptureImage Packed(
       AVPixelFormat format, int width, int height, uint8_t* data, int linesize)
@@ -103,10 +110,10 @@ public:
   CAMLCaptureConvert(const CAMLCaptureConvert&) = delete;
   CAMLCaptureConvert& operator=(const CAMLCaptureConvert&) = delete;
 
-  //! Copy the NV12 image src out of its mapping, scale it to the size of dst and convert it to
-  //! SDR, tonemapping HDR, then to coding as the GUI places SDR. dst is AV_PIX_FMT_BGRA or
-  //! AV_PIX_FMT_RGBA64LE. Where gui, a premultiplied 8-bit overlay of the size of dst, is clear,
-  //! the pixel goes to sdr, AV_PIX_FMT_RGBA of that size, in SDR instead.
+  //! Copy the NV12 image src out of its mapping, or unpack a full pack src, scale it to the size
+  //! of dst and convert it to SDR, tonemapping HDR, then to coding as the GUI places SDR. dst is
+  //! AV_PIX_FMT_BGRA or AV_PIX_FMT_RGBA64LE. Where gui, a premultiplied 8-bit overlay of the size
+  //! of dst, is clear, the pixel goes to sdr, AV_PIX_FMT_RGBA of that size, in SDR instead.
   bool Convert(const AMLCaptureImage& src,
                const AMLCaptureColor& color,
                const AMLCaptureCoding& coding,
@@ -139,6 +146,7 @@ private:
   SwsContext* m_scaleContext{nullptr};
   CAMLCaptureScratch<uint8_t> m_source;
   CAMLCaptureScratch<uint16_t> m_yuv;
+  CAMLCaptureScratch<uint16_t> m_unpacked;
   CAMLCaptureScratch<uint16_t> m_composite;
   std::vector<float> m_toneMap;
   float m_toneMapLuminance{0.0f};

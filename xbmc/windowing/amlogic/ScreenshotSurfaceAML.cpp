@@ -70,6 +70,7 @@ struct GuiReadback
   CRect video;
   int streamWidth{0};
   int streamHeight{0};
+  CaptureScreenshot shot{CaptureScreenshot::NONE};
 
   const uint8_t* Row(int y) const
   {
@@ -106,16 +107,18 @@ public:
     m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_gui.width) *
                                                          m_gui.height * 4);
     const auto session = m_session.lock();
-    if (!session || !session->Read(AMLCaptureInput::VIDEO, m_gui.streamWidth, m_gui.streamHeight,
-                                   [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
-                                   { return Blend(frame, convert); }))
-    {
-      // a GUI in an HDR coding would pass for SDR
-      if (m_gui.coding.transfer != AMLCaptureCoding::Transfer::SDR)
-        m_buffer.reset();
-      else
-        CopyGui();
-    }
+    bool ok = false;
+    if (session)
+      ok = session->ReadVideo(m_gui.shot, m_gui.streamWidth, m_gui.streamHeight,
+                              [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                              { return Blend(frame, convert); });
+    if (m_gui.shot != CaptureScreenshot::NONE)
+      m_lease.reset();
+    // a GUI in an HDR coding would pass for SDR
+    if (!ok && m_gui.coding.transfer != AMLCaptureCoding::Transfer::SDR)
+      m_buffer.reset();
+    else if (!ok)
+      CopyGui();
     return m_buffer.get();
   }
 
@@ -279,6 +282,7 @@ void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& r
   gui.coding.whiteNits = winSystem->GetGuiCompositePeak() * PQ_PEAK_NITS;
   gui.video = session->GetVisibleRect();
   CAMLCapture::GetCaptureSize(gui.streamWidth, gui.streamHeight);
+  gui.shot = spec.screenshot;
 
   result.pixels = std::make_shared<CAMLCompositePixels>(session, session->Lease(), std::move(gui));
   result.width = static_cast<unsigned int>(m_width);
