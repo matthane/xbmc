@@ -593,3 +593,35 @@ inline std::string AMLSerializeContentLight(const AVContentLightMetadata& light)
       static_cast<uint8_t>(light.MaxFALL >> 8), static_cast<uint8_t>(light.MaxFALL & 0xff)};
   return Base64::Encode(reinterpret_cast<const char*>(out), sizeof(out));
 }
+
+// the title peak in cd/m2 of the latched statics in ffmpeg's order (ff_determine_signal_peak):
+// MaxCLL, then the mastering display maximum where ff_h2645_sei_to_frame accepts it, else 0
+inline float AMLGetTitlePeak(const AMLFrameMetadata& meta)
+{
+  const std::string cll = Base64::Decode(meta.hdrCll);
+  if (cll.size() >= 4)
+  {
+    const auto* data = reinterpret_cast<const uint8_t*>(cll.data());
+    const int maxCll = (data[0] << 8) | data[1];
+    if (maxCll > 0)
+      return static_cast<float>(maxCll);
+  }
+
+  const std::string mdcv = Base64::Decode(meta.hdrMdcv);
+  if (mdcv.size() < 24)
+    return 0.0f;
+
+  const auto* data = reinterpret_cast<const uint8_t*>(mdcv.data());
+  const auto get32 = [data](size_t p)
+  {
+    return (static_cast<uint32_t>(data[p]) << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) |
+           data[p + 3];
+  };
+  // in 0.0001 cd/m2
+  const uint32_t maxLuminance = get32(16);
+  const uint32_t minLuminance = get32(20);
+  if (maxLuminance < 50000 || maxLuminance > 100000000 || minLuminance > 50000 ||
+      minLuminance >= maxLuminance)
+    return 0.0f;
+  return static_cast<float>(maxLuminance / 10000);
+}

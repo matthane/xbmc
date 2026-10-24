@@ -868,6 +868,15 @@ void ServiceCaptureTaps()
     return;
   }
 
+  if (CaptureResult result; surface->CaptureDirect(request->spec, result))
+  {
+    if (result.pixels)
+      captureService->Complete(request, std::move(result));
+    else
+      captureService->Fail(request);
+    return;
+  }
+
   const ScreenshotContext ctx{*winSystem};
   if (!surface->Read(ctx))
   {
@@ -876,13 +885,8 @@ void ServiceCaptureTaps()
   }
 
   CaptureResult result;
-  result.pixels =
-      std::make_shared<CHeapCapturePixels>(std::unique_ptr<uint8_t[]>(surface->TakeBuffer()));
-  result.width = static_cast<unsigned int>(surface->GetWidth());
-  result.height = static_cast<unsigned int>(surface->GetHeight());
-  result.stride = surface->GetStride();
-  result.format = surface->GetFormat();
   result.color = GetOutputColorMetadata(*winSystem);
+  surface->TakePixels(request->spec, result);
   result.content = CaptureContent::COMPOSITE; // this tap is the composite half
 
   captureService->Complete(request, result);

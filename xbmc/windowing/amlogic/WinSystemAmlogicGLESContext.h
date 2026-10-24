@@ -60,6 +60,10 @@ public:
   void EndGuiComposite() override;
   void CompositeGui() override;
   bool IsHdrComposite() const override { return m_guiCompositing; }
+  // the transfer of the composited GUI for screenshots, 0 when the GUI is SDR
+  int GetGuiCompositeTransfer() const { return m_guiCompositing ? m_guiCompositeTransfer : 0; }
+  // the composited GUI's SDR white, PQ-normalized
+  float GetGuiCompositePeak() const { return m_guiCompositePeak; }
   bool GuiWillRender() const override { return m_guiWillRender; }
 
   EGLDisplay GetEGLDisplay() const;

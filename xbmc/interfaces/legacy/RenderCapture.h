@@ -10,12 +10,14 @@
 
 #include "AddonClass.h"
 #include "Exception.h"
+#include "LanguageHook.h"
 #include "ServiceBroker.h"
 #include "application/ApplicationComponents.h"
 #include "application/ApplicationPlayer.h"
 #include "commons/Buffer.h"
 #include "rendering/capture/CaptureConvert.h"
 #include "rendering/capture/CaptureHandle.h"
+#include "rendering/capture/CaptureRequest.h"
 #include "rendering/capture/CaptureService.h"
 
 #include <chrono>
@@ -47,7 +49,26 @@ namespace XBMCAddon
       std::unique_ptr<KODI::RENDERING::CAPTURE::CCaptureHandle> m_handle;
       unsigned int m_width{0};
       unsigned int m_height{0};
+      bool m_composite{false};
       std::unique_ptr<uint8_t[]> m_buffer;
+
+#ifndef SWIG
+      //! a continuous capture that has not ended
+      bool IsRunning() const
+      {
+        const KODI::RENDERING::CAPTURE::CaptureState state = m_handle->GetState();
+        return state == KODI::RENDERING::CAPTURE::CaptureState::PENDING ||
+               state == KODI::RENDERING::CAPTURE::CaptureState::LATCHED;
+      }
+
+      //! waits for the next frame without holding the interpreter lock
+      bool WaitFrame(unsigned int msec)
+      {
+        KODI::RENDERING::CAPTURE::CCaptureHandle& handle = *m_handle;
+        DelayedCallGuard dg(languageHook);
+        return handle.WaitNext(std::chrono::milliseconds(msec ? msec : 1000));
+      }
+#endif
 
     public:
       RenderCapture() = default;
@@ -154,26 +175,36 @@ namespace XBMCAddon
 #ifdef DOXYGEN_SHOULD_USE_THIS
       ///
       /// \ingroup python_xbmc_RenderCapture
-      /// @brief \python_func{ capture(width, height) }
+      /// @brief \python_func{ capture(width, height[, composite]) }
       /// Issue capture request.
       ///
       /// @param width               Width capture image should be rendered to
       /// @param height              Height capture image should should be rendered to
+      /// @param composite           [opt] bool - True captures the screen as shown, GUI
+      ///                            included; False (default) captures the video only
       ///
       ///
       ///-----------------------------------------------------------------------
       /// @python_v17 Removed the option to pass **flags**
+      /// @python_v22 Added the option **composite**.
       ///
       capture(...)
 #else
-      inline void capture(int width, int height)
+      inline void capture(int width, int height, bool composite = false)
 #endif
       {
+        // a running continuous capture already delivers fresh frames at this size
+        if (m_handle && static_cast<unsigned int>(width) == m_width &&
+            static_cast<unsigned int>(height) == m_height && composite == m_composite &&
+            IsRunning())
+          return;
+
         // cancel any previous request before its buffer goes away
         m_handle.reset();
 
         m_width = width;
         m_height = height;
+        m_composite = composite;
         m_buffer = std::make_unique<uint8_t[]>(static_cast<size_t>(m_width) * m_height * 4);
 
         m_service = CServiceBroker::GetCaptureService();
@@ -181,7 +212,8 @@ namespace XBMCAddon
           return;
 
         KODI::RENDERING::CAPTURE::CaptureSpec spec;
-        spec.content = KODI::RENDERING::CAPTURE::CaptureContent::VIDEO;
+        spec.content = composite ? KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE
+                                 : KODI::RENDERING::CAPTURE::CaptureContent::VIDEO;
         spec.cadence = KODI::RENDERING::CAPTURE::CaptureCadence::CONTINUOUS;
         spec.width = m_width;
         spec.height = m_height;
@@ -194,8 +226,16 @@ namespace XBMCAddon
       {
         if (!m_handle)
           return false;
-        if (!m_handle->WaitNext(std::chrono::milliseconds(msec ? msec : 1000)))
-          return false;
+        if (!m_handle->WaitNext(std::chrono::milliseconds(0)))
+        {
+          const bool running = IsRunning();
+          const KODI::RENDERING::CAPTURE::CaptureResult last = m_handle->CopyResult();
+          if (last.live && running &&
+              KODI::RENDERING::CAPTURE::CaptureCopyBGRA8(last, m_width, m_height, m_buffer.get()))
+            return true;
+          if (!WaitFrame(msec))
+            return false;
+        }
         const KODI::RENDERING::CAPTURE::CaptureResult result = m_handle->CopyResult();
         // legacy contract: raw output-coded 8-bit BGRA, never tonemapped; an
         // HDR session delivers PQ/HLG-coded bytes exactly as glReadPixels did
