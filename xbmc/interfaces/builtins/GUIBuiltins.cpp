@@ -368,12 +368,13 @@ static int RefreshRSS(const std::vector<std::string>& params)
 /*! \brief Take a screenshot.
  *  \param params The parameters.
  *  \details params[0] = URL to save file to. Blank to use default.
- *           Any parameter may be "video" for a video-only screenshot.
+ *           Any parameter may be "video" for a video-only screenshot, or "native".
  */
 static int Screenshot(const std::vector<std::string>& params)
 {
   std::string strSaveToPath;
   bool video = false;
+  bool native = false;
   for (const std::string& param : params)
   {
     if (StringUtils::EqualsNoCase(param, "sync"))
@@ -381,12 +382,16 @@ static int Screenshot(const std::vector<std::string>& params)
                           "the screenshot is written asynchronously");
     else if (StringUtils::EqualsNoCase(param, "video"))
       video = true;
+    else if (StringUtils::EqualsNoCase(param, "native"))
+      native = true;
     else if (strSaveToPath.empty())
       strSaveToPath = param;
   }
 
   const auto content = video ? KODI::RENDERING::CAPTURE::CaptureContent::VIDEO
                              : KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE;
+  const auto type = native ? KODI::RENDERING::CAPTURE::CaptureScreenshot::NATIVE
+                           : KODI::RENDERING::CAPTURE::CaptureScreenshot::STANDARD;
 
   if (video)
   {
@@ -409,7 +414,7 @@ static int Screenshot(const std::vector<std::string>& params)
 
       if (!file.empty())
       {
-        CScreenShot::TakeScreenshot(file, content);
+        CScreenShot::TakeScreenshot(file, content, type);
       }
       else
       {
@@ -417,10 +422,10 @@ static int Screenshot(const std::vector<std::string>& params)
       }
     }
     else
-      CScreenShot::TakeScreenshot(strSaveToPath, content);
+      CScreenShot::TakeScreenshot(strSaveToPath, content, type);
   }
   else
-    CScreenShot::TakeScreenshot(content);
+    CScreenShot::TakeScreenshot(content, type);
 
   return 0;
 }
@@ -651,12 +656,14 @@ static int ToggleDirty(const std::vector<std::string>&)
 ///     @param[in] ident                 Stereo mode identifier.
 ///   }
 ///   \table_row2_l{
-///     <b>`TakeScreenshot(url[\,video])`</b>
+///     <b>`TakeScreenshot(url[\,video][\,native])`</b>
 ///     ,
 ///     Takes a Screenshot
 ///     @param[in] url                   URL to save file to. Blank to use default.
 ///     @param[in] video                 Add "video" to capture the video frame only\,
 ///     without GUI\, OSD or subtitles (optional).
+///     @param[in] native                Add "native" to keep the output's own size\, bit depth
+///     and HDR coding\, on platforms that can (optional).
 ///   }
 ///   \table_row2_l{
 ///     <b>`ToggleDirtyRegionVisualization`</b>

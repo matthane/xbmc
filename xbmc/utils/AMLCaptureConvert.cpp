@@ -60,6 +60,10 @@ constexpr double DV_SDR_BLACK_NITS = 0.005;
 
 // swscale widens 8-bit codes to YUV444P16 by a shift of 8
 constexpr float CODE_SCALE_8_TO_16 = 256.0f;
+constexpr int CODE_SHIFT_10_TO_16 = 6;
+
+constexpr int FULL_PACK_CODE_BITS = 10;
+constexpr uint64_t FULL_PACK_CODE_MASK = (1 << FULL_PACK_CODE_BITS) - 1;
 
 constexpr float LIMITED_BLACK = 16.0f;
 constexpr float LIMITED_LUMA_SPAN = 219.0f;
@@ -105,11 +109,12 @@ constexpr double HABLE_WHITE_NITS = 100.0;
 constexpr double TONEMAP_SCALE = PQ_PEAK_NITS / HABLE_WHITE_NITS * HABLE_EXPOSURE / TONEMAP_PARAM;
 constexpr double SDR_OUTPUT_GAMMA = 2.2;
 
-// interpolated tables stay within 0.1 8-bit code of the exact transfer functions
+// interpolated tables stay within 0.1 8-bit code of the exact transfer functions; tables of
+// linear light are indexed by its fourth root, which spaces the steps much like PQ does
 constexpr int PQ_EOTF_STEPS = 16384;
 constexpr int TABLE_STEPS = 4096;
 // a log table indexes linear light by the float's exponent and top mantissa bits, uniform in
-// linear within each of its octaves
+// linear within each of its octaves; it needs no root
 constexpr int LOG_TABLE_STEP_BITS = 8;
 constexpr int LOG_TABLE_OCTAVES = 48;
 constexpr int FLOAT_MANTISSA_BITS = 23;
@@ -225,6 +230,11 @@ std::vector<float> MakeTable(int steps, F f)
   return table;
 }
 
+std::vector<float> MakeRootTable(int steps, double (*f)(double))
+{
+  return MakeTable(steps, [f](double root) { return f(root * root * root * root); });
+}
+
 template<typename F>
 std::vector<float> MakeLogTable(F f)
 {
@@ -242,6 +252,19 @@ std::vector<float> MakeLogTable(F f)
   return table;
 }
 
+float Lookup(const std::vector<float>& table, float v)
+{
+  const int steps = static_cast<int>(table.size()) - 2;
+  const float pos = std::clamp(v, 0.0f, 1.0f) * steps;
+  const int i = static_cast<int>(pos);
+  return table[i] + (table[i + 1] - table[i]) * (pos - i);
+}
+
+float LookupRoot(const std::vector<float>& table, float linear)
+{
+  return Lookup(table, std::sqrt(std::sqrt(std::max(linear, 0.0f))));
+}
+
 float LookupLog(const float* table, float linear)
 {
   const uint32_t bits = std::bit_cast<uint32_t>(std::clamp(linear, LOG_TABLE_MIN, 1.0f)) -
@@ -255,8 +278,10 @@ float LookupLog(const float* table, float linear)
 struct Tables
 {
   std::vector<float> pqToLinear = MakeTable(PQ_EOTF_STEPS, PQToLinear);
+  std::vector<float> linearToPQ = MakeRootTable(TABLE_STEPS, LinearToPQ);
   std::vector<float> linearToPQLog = MakeLogTable(LinearToPQ);
   std::vector<float> srgbToLinear = MakeTable(TABLE_STEPS, SrgbToLinear);
+  std::vector<float> linearToSrgb = MakeRootTable(TABLE_STEPS, LinearToSrgb);
   std::vector<float> linearToSrgbLog = MakeLogTable(LinearToSrgb);
   std::vector<float> hlgToScene = MakeTable(TABLE_STEPS, HlgToScene);
   std::vector<float> hlgSystemGain = MakeLogTable(HlgSystemGain);
@@ -304,6 +329,116 @@ void YccToRgb(const float ycc[3], float kr, float kb, float out[3])
     lms[c] = eotf[i] + (eotf[i + 1] - eotf[i]) * (pos - i);
   }
   Apply(BT2100_LMS_TO_RGB, lms, linear);
+}
+
+void HlgToLinear(const float hlg[3], const Tables& tables, float out[3])
+{
+  float scene[3];
+  for (int c = 0; c < 3; c++)
+    scene[c] = Lookup(tables.hlgToScene, hlg[c]);
+  const float luma =
+      BT2020_KR * scene[0] + (1 - BT2020_KR - BT2020_KB) * scene[1] + BT2020_KB * scene[2];
+  const double gain = luma > 0 ? HlgSystemGain(luma) : 0.0;
+  for (int c = 0; c < 3; c++)
+    out[c] = static_cast<float>(static_cast<double>(scene[c]) * gain);
+}
+
+void LinearToHlg(const float linear[3], float out[3])
+{
+  double v[3];
+  for (int c = 0; c < 3; c++)
+    v[c] = static_cast<double>(std::max(linear[c], 0.0f));
+  const double gain = HlgInverseGain(static_cast<double>(BT2020_KR) * v[0] +
+                                     static_cast<double>(1 - BT2020_KR - BT2020_KB) * v[1] +
+                                     static_cast<double>(BT2020_KB) * v[2]);
+  for (int c = 0; c < 3; c++)
+    out[c] = static_cast<float>(SceneToHlg(v[c] * gain));
+}
+
+void SdrToLinear(float whiteNits, const Tables& tables, float v[3])
+{
+  float linear[3];
+  for (int c = 0; c < 3; c++)
+    linear[c] = static_cast<float>(static_cast<double>(Lookup(tables.srgbToLinear, v[c])) *
+                                   static_cast<double>(whiteNits) / PQ_PEAK_NITS);
+  Apply(BT709_TO_BT2020, linear, v);
+}
+
+void HdrToLinear(AMLCaptureCoding::Transfer transfer, const Tables& tables, float v[3])
+{
+  switch (transfer)
+  {
+    case AMLCaptureCoding::Transfer::PQ:
+      for (int c = 0; c < 3; c++)
+        v[c] = Lookup(tables.pqToLinear, v[c]);
+      break;
+    case AMLCaptureCoding::Transfer::HLG:
+    {
+      const float hlg[3] = {v[0], v[1], v[2]};
+      HlgToLinear(hlg, tables, v);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Y'CbCr to R'G'B' in 16-bit codes, the spans folded into the coefficients
+struct YccCoefficients
+{
+  float y{0.0f};
+  float rCr{0.0f};
+  float gCb{0.0f};
+  float gCr{0.0f};
+  float bCb{0.0f};
+};
+
+YccCoefficients MakeYccCoefficients(float kr, float kb)
+{
+  const double luma = 65535 / static_cast<double>(LIMITED_LUMA_SPAN * CODE_SCALE_8_TO_16);
+  const double chroma = 65535 / static_cast<double>(LIMITED_CHROMA_SPAN * CODE_SCALE_8_TO_16);
+  const double r = static_cast<double>(kr);
+  const double b = static_cast<double>(kb);
+  const double g = 1 - r - b;
+  YccCoefficients out;
+  out.y = static_cast<float>(luma);
+  out.rCr = static_cast<float>(chroma * 2 * (1 - r));
+  out.gCb = static_cast<float>(-chroma * 2 * b * (1 - b) / g);
+  out.gCr = static_cast<float>(-chroma * 2 * r * (1 - r) / g);
+  out.bCb = static_cast<float>(chroma * 2 * (1 - b));
+  return out;
+}
+
+uint16_t ClampTo16(float code)
+{
+  return static_cast<uint16_t>(std::clamp(code, 0.0f, 65535.0f) + 0.5f);
+}
+
+uint16_t ToBigEndian(uint16_t code)
+{
+  if constexpr (std::endian::native == std::endian::little)
+    return static_cast<uint16_t>(code << 8 | code >> 8);
+  return code;
+}
+
+void YccRowToRgb(const uint16_t* y,
+                 const uint16_t* cb,
+                 const uint16_t* cr,
+                 int width,
+                 const YccCoefficients& k,
+                 uint16_t* __restrict out)
+{
+  const float black = LIMITED_BLACK * CODE_SCALE_8_TO_16;
+  const float zero = LIMITED_CHROMA_ZERO * CODE_SCALE_8_TO_16;
+  for (int x = 0; x < width; x++, out += 3)
+  {
+    const float luma = k.y * (y[x] - black);
+    const float b = cb[x] - zero;
+    const float r = cr[x] - zero;
+    out[0] = ToBigEndian(ClampTo16(luma + k.rCr * r));
+    out[1] = ToBigEndian(ClampTo16(luma + k.gCb * b + k.gCr * r));
+    out[2] = ToBigEndian(ClampTo16(luma + k.bCb * b));
+  }
 }
 
 // a row of pixels as three planes of floats, which each step converts in place
@@ -415,6 +550,26 @@ void IctcpRow(const uint16_t* y,
   }
 }
 
+// Dolby Vision decoded to PQ BT.2020
+void IctcpRowToPQ(const uint16_t* y,
+                  const uint16_t* cb,
+                  const uint16_t* cr,
+                  int width,
+                  const Tables& tables,
+                  uint16_t* __restrict out)
+{
+  const float* eotf = tables.pqToLinear.data();
+  const float eotfSteps = static_cast<float>(tables.pqToLinear.size() - 2);
+  const float* oetf = tables.linearToPQLog.data();
+  for (int x = 0; x < width; x++, out += 3)
+  {
+    float linear[3];
+    IctcpToLinear(y[x], cb[x], cr[x], eotf, eotfSteps, linear);
+    for (int c = 0; c < 3; c++)
+      out[c] = ToBigEndian(ClampTo16(LookupLog(oetf, linear[c]) * 65535));
+  }
+}
+
 void HlgRowToLinear(const Tables& tables, const Planes& p, int width)
 {
   for (float* v : p)
@@ -486,6 +641,83 @@ bool DecodeRow(AMLCaptureSignal signal,
   }
 }
 
+// fill the odd samples of a chroma row that holds the pair's sample at the even ones
+void UpsampleChroma(uint16_t* row, int pairs, bool cosited)
+{
+  if (pairs <= 0)
+    return;
+
+  const int last = pairs - 1;
+  if (cosited)
+  {
+    for (int k = 0; k < last; k++)
+      row[2 * k + 1] = static_cast<uint16_t>((row[2 * k] + row[2 * k + 2] + 1) / 2);
+    row[2 * last + 1] = row[2 * last];
+    return;
+  }
+
+  // a pair average sits between its pixels, a quarter of a sample from each
+  int previous = row[0];
+  for (int k = 0; k < last; k++)
+  {
+    const int current = row[2 * k];
+    const int next = row[2 * k + 2];
+    row[2 * k] = static_cast<uint16_t>((previous + 3 * current + 2) / 4);
+    row[2 * k + 1] = static_cast<uint16_t>((3 * current + next + 2) / 4);
+    previous = current;
+  }
+  const int current = row[2 * last];
+  row[2 * last] = static_cast<uint16_t>((previous + 3 * current + 2) / 4);
+  row[2 * last + 1] = static_cast<uint16_t>(current);
+}
+
+// a full pack row to YUV444P16 rows, codes shifted as swscale widens 8-bit ones
+void UnpackFullPackRow(const AMLCaptureImage& src, int row, uint16_t* y, uint16_t* cb, uint16_t* cr)
+{
+  const auto code = [](uint64_t group, int index)
+  {
+    return static_cast<uint16_t>(((group >> (index * FULL_PACK_CODE_BITS)) & FULL_PACK_CODE_MASK)
+                                 << CODE_SHIFT_10_TO_16);
+  };
+  const int pairs = src.width / 2;
+  // a 64-bit load reads past its pair, so the last pair of a row is read bytewise
+  const int loads = std::endian::native == std::endian::little ? pairs - 1 : 0;
+  const uint8_t* in = src.data[0] + static_cast<std::ptrdiff_t>(row) * src.linesize[0];
+  const auto store = [&](int k, uint64_t group)
+  {
+    cb[2 * k] = code(group, 0);
+    y[2 * k] = code(group, 1);
+    cr[2 * k] = code(group, 2);
+    y[2 * k + 1] = code(group, 3);
+  };
+  int k = 0;
+  for (; k < loads; k++, in += AML_FULL_PACK_PAIR_BYTES)
+  {
+    uint64_t group = 0;
+    std::memcpy(&group, in, sizeof(group));
+    store(k, group);
+  }
+  for (; k < pairs; k++, in += AML_FULL_PACK_PAIR_BYTES)
+  {
+    uint64_t group = 0;
+    for (int b = AML_FULL_PACK_PAIR_BYTES - 1; b >= 0; b--)
+      group = group << 8 | in[b];
+    store(k, group);
+  }
+  UpsampleChroma(cb, pairs, src.cositedChroma);
+  UpsampleChroma(cr, pairs, src.cositedChroma);
+}
+
+// full pack to YUV444P16 planes of the source size
+void UnpackFullPack(const AMLCaptureImage& src, uint16_t* y, uint16_t* cb, uint16_t* cr)
+{
+  for (int row = 0; row < src.height; row++)
+  {
+    const std::size_t offset = static_cast<std::size_t>(row) * src.width;
+    UnpackFullPackRow(src, row, y + offset, cb + offset, cr + offset);
+  }
+}
+
 uint8_t To8(float v)
 {
   return static_cast<uint8_t>(v * 255 + 0.5f);
@@ -496,19 +728,20 @@ uint16_t To16(float v)
   return static_cast<uint16_t>(v * 65535 + 0.5f);
 }
 
-// a row of planes to opaque 8-bit pixels, red at R and blue at B
-template<int R, int B>
+// a row of planes to 8-bit pixels of STEP bytes, red at R and blue at B, opaque at 4 bytes
+template<int R, int B, int STEP>
 [[gnu::always_inline]] inline void StoreRow8(const Planes& p, int width, uint8_t* __restrict out)
 {
   const float* __restrict red = p[0];
   const float* __restrict green = p[1];
   const float* __restrict blue = p[2];
-  for (int x = 0; x < width; x++, out += 4)
+  for (int x = 0; x < width; x++, out += STEP)
   {
     out[R] = To8(std::clamp(red[x], 0.0f, 1.0f));
     out[1] = To8(std::clamp(green[x], 0.0f, 1.0f));
     out[B] = To8(std::clamp(blue[x], 0.0f, 1.0f));
-    out[3] = 255;
+    if constexpr (STEP == 4)
+      out[3] = 255;
   }
 }
 
@@ -559,6 +792,28 @@ bool CAMLCaptureConvert::Stage(const AMLCaptureImage& src, int width, int height
                     reinterpret_cast<uint8_t*>(m_yuv.Data() + 2 * plane), nullptr};
   const int yuvStride[] = {width * 2, width * 2, width * 2, 0};
 
+  // a full pack is the caller's copy, so it is unpacked straight to planes
+  if (src.fullPack)
+  {
+    const std::size_t srcPlane = static_cast<std::size_t>(src.width) * src.height;
+    m_unpacked.Resize(srcPlane * 3);
+    UnpackFullPack(src, m_unpacked.Data(), m_unpacked.Data() + srcPlane,
+                   m_unpacked.Data() + 2 * srcPlane);
+    m_scaleContext = sws_getCachedContext(
+        m_scaleContext, src.width, src.height, AV_PIX_FMT_YUV444P16LE, width, height,
+        AV_PIX_FMT_YUV444P16LE, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!m_scaleContext)
+      return false;
+
+    const uint8_t* srcData[] = {reinterpret_cast<const uint8_t*>(m_unpacked.Data()),
+                                reinterpret_cast<const uint8_t*>(m_unpacked.Data() + srcPlane),
+                                reinterpret_cast<const uint8_t*>(m_unpacked.Data() + 2 * srcPlane),
+                                nullptr};
+    const int srcStride[] = {src.width * 2, src.width * 2, src.width * 2, 0};
+    sws_scale(m_scaleContext, srcData, srcStride, 0, src.height, yuv, yuvStride);
+    return true;
+  }
+
   // the capture mapping is uncached: one sequential read, and every pass after it on the copy
   const std::size_t luma = static_cast<std::size_t>(src.width) * src.height;
   m_source.Resize(luma + luma / 2);
@@ -589,14 +844,19 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
                                  const AMLCaptureImage* sdr)
 {
   const bool bgra = dst.format == AV_PIX_FMT_BGRA;
-  if (src.format != AV_PIX_FMT_NV12 || src.width <= 0 || src.height <= 0 || dst.width <= 0 ||
-      dst.height <= 0 || (!bgra && dst.format != AV_PIX_FMT_RGBA64LE))
+  const bool rgb = dst.format == AV_PIX_FMT_RGB24;
+  if ((src.format != AV_PIX_FMT_NV12 && !src.fullPack) || src.width <= 0 || src.height <= 0 ||
+      dst.width <= 0 || dst.height <= 0 || (!bgra && !rgb && dst.format != AV_PIX_FMT_RGBA64LE))
     return false;
 
-  if (!Stage(src, dst.width, dst.height))
+  // a full pack at the output size is unpacked a row at a time, which spares the planes
+  const bool packRows = src.fullPack && src.width == dst.width && src.height == dst.height;
+  if (packRows)
+    m_yuv.Resize(static_cast<std::size_t>(dst.width) * 3);
+  else if (!Stage(src, dst.width, dst.height))
     return false;
 
-  const std::size_t plane = static_cast<std::size_t>(dst.width) * dst.height;
+  const std::size_t plane = static_cast<std::size_t>(dst.width) * (packRows ? 1 : dst.height);
   const std::vector<float>* toneMap = IsSdr(color.signal) ? nullptr : &GetToneMap(color.luminance);
   const Tables& tables = GetTables();
   // an HDR coding holds the SDR video as the GUI shader places SDR
@@ -606,7 +866,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
   const Planes p = {rows.data(), rows.data() + dst.width, rows.data() + 2 * dst.width};
   for (int y = 0; y < dst.height; y++)
   {
-    const uint16_t* luma = m_yuv.Data() + static_cast<std::size_t>(y) * dst.width;
+    uint16_t* luma = m_yuv.Data() + (packRows ? 0 : static_cast<std::size_t>(y) * dst.width);
+    if (packRows)
+      UnpackFullPackRow(src, y, luma, luma + plane, luma + 2 * plane);
     if (DecodeRow(color.signal, luma, luma + plane, luma + 2 * plane, dst.width, tables, p))
     {
       ApplyRow(BT2020_TO_BT709, p, dst.width);
@@ -623,8 +885,8 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
       const Planes span = {p[0] + x1, p[1] + x1, p[2] + x1};
       if (overlay && IsClear(overlay + 4 * x1))
       {
-        StoreRow8<0, 2>(span, width,
-                        sdr->data[0] + static_cast<std::ptrdiff_t>(y) * sdr->linesize[0] + x1 * 4);
+        StoreRow8<0, 2, 4>(
+            span, width, sdr->data[0] + static_cast<std::ptrdiff_t>(y) * sdr->linesize[0] + x1 * 4);
         continue;
       }
 
@@ -644,7 +906,9 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
 
       uint8_t* row = dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0];
       if (bgra)
-        StoreRow8<2, 0>(span, width, row + x1 * 4);
+        StoreRow8<2, 0, 4>(span, width, row + x1 * 4);
+      else if (rgb)
+        StoreRow8<0, 2, 3>(span, width, row + x1 * 3);
       else
       {
         uint16_t* out = reinterpret_cast<uint16_t*>(row) + x1 * 4;
@@ -657,6 +921,125 @@ bool CAMLCaptureConvert::Convert(const AMLCaptureImage& src,
       }
     }
   }
+  return true;
+}
+
+bool CAMLCaptureConvert::ConvertNative(const AMLCaptureImage& src,
+                                       const AMLCaptureColor& color,
+                                       const AMLCaptureImage& dst)
+{
+  if (!src.fullPack || src.width <= 0 || src.height <= 0 || src.width != dst.width ||
+      src.height != dst.height || dst.format != AV_PIX_FMT_RGB48BE)
+    return false;
+
+  // the signal's own R'G'B'; Dolby Vision has none, so it is coded PQ
+  bool ictcp = false;
+  YccCoefficients coefficients;
+  switch (color.signal)
+  {
+    case AMLCaptureSignal::PQ:
+    case AMLCaptureSignal::HLG:
+      coefficients = MakeYccCoefficients(BT2020_KR, BT2020_KB);
+      break;
+    case AMLCaptureSignal::DV_TV_LED:
+    case AMLCaptureSignal::DV_LL:
+    case AMLCaptureSignal::DV_HDR10:
+    case AMLCaptureSignal::DV_SDR:
+      ictcp = true;
+      break;
+    case AMLCaptureSignal::SDR:
+    default:
+      coefficients = MakeYccCoefficients(BT709_KR, BT709_KB);
+      break;
+  }
+
+  const int width = dst.width;
+  const auto yuv = std::make_unique_for_overwrite<uint16_t[]>(static_cast<std::size_t>(width) * 3);
+  uint16_t* luma = yuv.get();
+  const Tables& tables = GetTables();
+  for (int y = 0; y < dst.height; y++)
+  {
+    UnpackFullPackRow(src, y, luma, luma + width, luma + 2 * width);
+    uint16_t* out =
+        reinterpret_cast<uint16_t*>(dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0]);
+    if (ictcp)
+      IctcpRowToPQ(luma, luma + width, luma + 2 * width, width, tables, out);
+    else
+      YccRowToRgb(luma, luma + width, luma + 2 * width, width, coefficients, out);
+  }
+  return true;
+}
+
+AMLCaptureCoding::Transfer CAMLCaptureConvert::GetNativeTransfer(AMLCaptureSignal signal)
+{
+  switch (signal)
+  {
+    case AMLCaptureSignal::PQ:
+    case AMLCaptureSignal::DV_TV_LED:
+    case AMLCaptureSignal::DV_LL:
+    case AMLCaptureSignal::DV_HDR10:
+    case AMLCaptureSignal::DV_SDR:
+      return AMLCaptureCoding::Transfer::PQ;
+    case AMLCaptureSignal::HLG:
+      return AMLCaptureCoding::Transfer::HLG;
+    case AMLCaptureSignal::SDR:
+    default:
+      return AMLCaptureCoding::Transfer::SDR;
+  }
+}
+
+void CAMLCaptureConvert::Recode(const float in[3],
+                                const AMLCaptureCoding& from,
+                                const AMLCaptureCoding& to,
+                                float out[3])
+{
+  const Tables& tables = GetTables();
+  float v[3] = {in[0], in[1], in[2]};
+  if (from.transfer == AMLCaptureCoding::Transfer::SDR)
+    SdrToLinear(from.whiteNits, tables, v);
+  else
+    HdrToLinear(from.transfer, tables, v);
+
+  switch (to.transfer)
+  {
+    case AMLCaptureCoding::Transfer::PQ:
+      for (int c = 0; c < 3; c++)
+        out[c] = LookupRoot(tables.linearToPQ, v[c]);
+      break;
+    case AMLCaptureCoding::Transfer::HLG:
+      LinearToHlg(v, out);
+      break;
+    case AMLCaptureCoding::Transfer::SDR:
+    default:
+    {
+      for (int c = 0; c < 3; c++)
+        v[c] = static_cast<float>(static_cast<double>(v[c]) * PQ_PEAK_NITS /
+                                  static_cast<double>(to.whiteNits));
+      Apply(BT2020_TO_BT709, v, out);
+      for (int c = 0; c < 3; c++)
+        out[c] = LookupRoot(tables.linearToSrgb, out[c]);
+      break;
+    }
+  }
+
+  for (int c = 0; c < 3; c++)
+    out[c] = std::clamp(out[c], 0.0f, 1.0f);
+}
+
+bool CAMLCaptureConvert::Scale(const AMLCaptureImage& src, const AMLCaptureImage& dst)
+{
+  SwsContext* context = sws_getContext(
+      src.width, src.height, AV_PIX_FMT_RGBA, dst.width, dst.height, AV_PIX_FMT_RGBA,
+      SWS_BILINEAR | SWS_FULL_CHR_H_INP | SWS_ACCURATE_RND, nullptr, nullptr, nullptr);
+  if (!context)
+    return false;
+
+  const uint8_t* srcData[] = {src.data[0], nullptr, nullptr, nullptr};
+  const int srcStride[] = {src.linesize[0], 0, 0, 0};
+  uint8_t* dstData[] = {dst.data[0], nullptr, nullptr, nullptr};
+  const int dstStride[] = {dst.linesize[0], 0, 0, 0};
+  sws_scale(context, srcData, srcStride, 0, src.height, dstData, dstStride);
+  sws_freeContext(context);
   return true;
 }
 
@@ -702,8 +1085,8 @@ void CAMLCaptureConvert::MapToSdr(const AMLCaptureImage& src,
       for (float* v : span)
         LookupLogRow(tables.linearToSrgbLog, v, width);
 
-      StoreRow8<0, 2>(span, width,
-                      dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0] + x1 * 4);
+      StoreRow8<0, 2, 4>(span, width,
+                         dst.data[0] + static_cast<std::ptrdiff_t>(y) * dst.linesize[0] + x1 * 4);
     }
   }
 }

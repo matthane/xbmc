@@ -12,12 +12,12 @@
 #include "rendering/capture/CaptureTypes.h"
 #include "utils/AMLCapture.h"
 #include "utils/Screenshot.h"
+#include "utils/log.h"
 #include "windowing/amlogic/WinSystemAmlogicGLESContext.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <mutex>
 
 using namespace KODI::RENDERING::CAPTURE;
@@ -29,6 +29,48 @@ constexpr int FULL_SPAN_8 = 255;
 constexpr int CODE_SPAN_8_TO_16 = 257;
 // the GUI composite peak is PQ-normalized luminance
 constexpr float PQ_PEAK_NITS = 10000.0f;
+
+// 16-bit RGBA codes to 8-bit pixels of STEP bytes
+template<int STEP>
+void Quantize(const uint16_t* in, int pixels, uint8_t* out)
+{
+  for (int i = 0; i < pixels; i++, in += 4, out += STEP)
+  {
+    for (int c = 0; c < STEP; c++)
+      out[c] = static_cast<uint8_t>((in[c] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+  }
+}
+
+// 8-bit RGBA pixels repacked in place to STEP bytes
+template<int STEP>
+void Repack(uint8_t* pixels, int count)
+{
+  const uint8_t* in = pixels;
+  uint8_t* out = pixels;
+  for (int i = 0; i < count; i++, in += 4, out += STEP)
+  {
+    for (int c = 0; c < 3; c++)
+      out[c] = in[c];
+  }
+}
+
+// a premultiplied 8-bit GUI pixel recoded, as premultiplied 16-bit codes
+void RecodeGui(const int channel[3],
+               int alpha,
+               const AMLCaptureCoding& from,
+               const AMLCaptureCoding& to,
+               int out[3])
+{
+  float in[3];
+  for (int c = 0; c < 3; c++)
+    in[c] =
+        std::clamp(static_cast<float>(channel[c]) * FULL_SPAN_8 / alpha / FULL_SPAN_8, 0.0f, 1.0f);
+  float coded[3];
+  CAMLCaptureConvert::Recode(in, from, to, coded);
+  for (int c = 0; c < 3; c++)
+    out[c] = static_cast<int>(
+        std::lround(coded[c] * FULL_SPAN_8 * alpha / FULL_SPAN_8 * CODE_SPAN_8_TO_16));
+}
 
 // a normalized coordinate in pixels
 int Edge(float v, int pixels)
@@ -70,6 +112,7 @@ struct GuiReadback
   CRect video;
   int streamWidth{0};
   int streamHeight{0};
+  CaptureScreenshot shot{CaptureScreenshot::NONE};
 
   const uint8_t* Row(int y) const
   {
@@ -103,21 +146,44 @@ public:
       return m_buffer.get();
     m_read = true;
 
-    m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_gui.width) *
-                                                         m_gui.height * 4);
+    const bool native = m_gui.shot == CaptureScreenshot::NATIVE;
+    if (!native)
+      m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(m_gui.width) *
+                                                           m_gui.height * 4);
     const auto session = m_session.lock();
-    if (!session || !session->Read(AMLCaptureInput::VIDEO, m_gui.streamWidth, m_gui.streamHeight,
-                                   [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
-                                   { return Blend(frame, convert); }))
+    bool ok = false;
+    if (native)
     {
-      // a GUI in an HDR coding would pass for SDR
-      if (m_gui.coding.transfer != AMLCaptureCoding::Transfer::SDR)
-        m_buffer.reset();
-      else
-        CopyGui();
+      AMLCaptureShotFrame shot;
+      if (!session)
+        CLog::Log(LOGWARNING, "CScreenshotSurfaceAML::{}: no native screenshot, the video stopped",
+                  __FUNCTION__);
+      ok = session && session->ReadShot(m_gui.shot, shot) && BlendNative(shot);
+      m_native.resolved = ok;
     }
+    else if (session)
+      ok = session->ReadVideo(m_gui.shot, m_gui.streamWidth, m_gui.streamHeight,
+                              [this](const AMLCaptureFrame& frame, CAMLCaptureConvert& convert)
+                              { return Blend(frame, convert); });
+    if (m_gui.shot != CaptureScreenshot::NONE)
+      m_lease.reset();
+    // a native screenshot that is only the GUI would pass for a capture of the screen, and a GUI
+    // in an HDR coding for SDR
+    if (!ok && (native || m_gui.coding.transfer != AMLCaptureCoding::Transfer::SDR))
+    {
+      if (m_gui.shot == CaptureScreenshot::STANDARD)
+        CLog::Log(LOGWARNING, "CScreenshotSurfaceAML::{}: no HDR GUI screenshot without the video",
+                  __FUNCTION__);
+      m_buffer.reset();
+    }
+    else if (!ok)
+      CopyGui();
+    // read once; the encode that follows is the peak
+    m_gui.pixels.reset();
     return m_buffer.get();
   }
+
+  bool Describe(CaptureResult& result) const override { return m_native.Describe(result); }
 
 private:
   // place the visible video, mapped to SDR, in the GUI's coding at its place on black, blend the
@@ -127,7 +193,6 @@ private:
   {
     const int width = m_gui.width;
     const int height = m_gui.height;
-    const size_t size = static_cast<size_t>(width) * height * 4;
 
     const AMLCaptureCoding& coding = m_gui.coding;
     const AMLCaptureImage image = convert.GetCompositeImage(width, height);
@@ -193,29 +258,126 @@ private:
       }
     }
 
+    const int pixels = width * height;
     if (!hdr)
     {
-      for (size_t i = 0; i < size; i++)
-        m_buffer[i] =
-            static_cast<uint8_t>((composite[i] + CODE_SPAN_8_TO_16 / 2) / CODE_SPAN_8_TO_16);
+      if (IsRgb())
+        Quantize<3>(composite, pixels, m_buffer.get());
+      else
+        Quantize<4>(composite, pixels, m_buffer.get());
       return true;
     }
 
     convert.MapToSdr(image, coding, dst, &overlay);
+
+    if (IsRgb())
+      Repack<3>(m_buffer.get(), pixels);
     return true;
   }
 
+  // place the visible video in its own coding at its place in the shot's size, scale the GUI to
+  // that size, recode it where its coding differs and blend it over as the OSD blender does
+  bool BlendNative(AMLCaptureShotFrame& shot)
+  {
+    const AMLCaptureFrame& frame = shot.frame;
+    const int width = frame.image.width;
+    const int height = frame.image.height;
+    const size_t size = static_cast<size_t>(width) * height * 4;
+
+    const AMLCaptureCoding& guiCoding = m_gui.coding;
+    AMLCaptureCoding videoCoding;
+    videoCoding.transfer = CAMLCaptureConvert::GetNativeTransfer(frame.color.signal);
+    videoCoding.whiteNits = guiCoding.whiteNits;
+    const bool recode = guiCoding.transfer != videoCoding.transfer;
+
+    m_buffer = std::make_unique_for_overwrite<uint8_t[]>(static_cast<size_t>(width) * height * 6);
+    const AMLCaptureImage image =
+        AMLCaptureImage::Packed(AV_PIX_FMT_RGB48BE, width, height, m_buffer.get(), width * 6);
+
+    const CRect& video = m_gui.video;
+    const int x1 = Edge(video.x1, width);
+    const int y1 = Edge(video.y1, height);
+    AMLCaptureImage place = Offset(image, x1, y1, 6);
+    // vdin1 holds the video at its size in the shot, so it is placed 1:1 and never resampled
+    AMLCaptureImage crop =
+        CAMLCapture::Crop(frame.image, CRect(0.0f, 0.0f, video.Width(), video.Height()));
+    crop.width = std::min(crop.width, (width - x1) & ~1);
+    crop.height = std::min(crop.height, height - y1);
+    place.width = crop.width;
+    place.height = crop.height;
+    // the place is converted whole; around it the video is black
+    FillAround(width, height, x1, y1, place.width, place.height,
+               [&](int y, int from, int to)
+               {
+                 uint8_t* row = m_buffer.get() + static_cast<size_t>(y) * width * 6;
+                 std::fill(row + from * 6, row + to * 6, 0);
+               });
+    if (place.width > 0 && place.height > 0 &&
+        !CAMLCaptureConvert::ConvertNative(crop, frame.color, place))
+      return false;
+
+    m_native.color = frame.color;
+    m_native.width = width;
+    m_native.height = height;
+    shot = {};
+
+    std::unique_ptr<uint8_t[]> scaled;
+    if (m_gui.width != width || m_gui.height != height)
+    {
+      scaled = std::make_unique_for_overwrite<uint8_t[]>(size);
+      const AMLCaptureImage dst =
+          AMLCaptureImage::Packed(AV_PIX_FMT_RGBA, width, height, scaled.get(), width * 4);
+      if (!CAMLCaptureConvert::Scale(m_gui.Image(), dst))
+        return false;
+    }
+
+    const int r = m_gui.bgra ? 2 : 0;
+    const int b = m_gui.bgra ? 0 : 2;
+    for (int y = 0; y < height; y++)
+    {
+      const uint8_t* gui =
+          scaled ? scaled.get() + static_cast<size_t>(y) * width * 4 : m_gui.Row(y);
+      uint8_t* out = m_buffer.get() + static_cast<size_t>(y) * width * 6;
+      for (int x = 0; x < width; x++, gui += 4)
+      {
+        const int alpha = gui[3];
+        const int channel[3] = {gui[r], gui[1], gui[b]};
+        int over[3] = {channel[0] * CODE_SPAN_8_TO_16, channel[1] * CODE_SPAN_8_TO_16,
+                       channel[2] * CODE_SPAN_8_TO_16};
+        if (recode && alpha > 0)
+          RecodeGui(channel, alpha, guiCoding, videoCoding, over);
+        for (int c = 0; c < 3; c++, out += 2)
+        {
+          const int under = out[0] << 8 | out[1];
+          const int value = over[c] + (FULL_SPAN_8 - alpha) * under / FULL_SPAN_8;
+          const uint16_t blended = static_cast<uint16_t>(std::min(value, 65535));
+          out[0] = static_cast<uint8_t>(blended >> 8);
+          out[1] = static_cast<uint8_t>(blended);
+        }
+      }
+    }
+    return true;
+  }
+
+  // a standard screenshot is the rows of an 8-bit PNG
+  bool IsRgb() const { return m_gui.shot == CaptureScreenshot::STANDARD; }
+
   void CopyGui()
   {
+    const int step = IsRgb() ? 3 : 4;
+    const int r = m_gui.bgra ? 2 : 0;
+    const int b = m_gui.bgra ? 0 : 2;
+    uint8_t* out = m_buffer.get();
     for (int y = 0; y < m_gui.height; y++)
     {
       const uint8_t* gui = m_gui.Row(y);
-      uint8_t* out = m_buffer.get() + static_cast<size_t>(y) * m_gui.width * 4;
-      std::memcpy(out, gui, static_cast<size_t>(m_gui.width) * 4);
-      if (m_gui.bgra)
+      for (int x = 0; x < m_gui.width; x++, gui += 4, out += step)
       {
-        for (int x = 0; x < m_gui.width; x++)
-          std::swap(out[x * 4], out[x * 4 + 2]);
+        out[0] = gui[r];
+        out[1] = gui[1];
+        out[2] = gui[b];
+        if (step == 4)
+          out[3] = gui[3];
       }
     }
   }
@@ -226,6 +388,7 @@ private:
   std::mutex m_lock;
   bool m_read{false};
   std::unique_ptr<uint8_t[]> m_buffer;
+  AMLCaptureNative m_native;
 };
 
 } // namespace
@@ -261,9 +424,22 @@ void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& r
 
   const auto session = CAMLCapture::GetActive();
   auto* winSystem = dynamic_cast<CWinSystemAmlogicGLESContext*>(CServiceBroker::GetWinSystem());
-  if (!session || !session->IsPresented() || !winSystem ||
-      (m_format != AV_PIX_FMT_RGBA && m_format != AV_PIX_FMT_BGRA))
+  // with no video presented a native screenshot is the GUI readback, which loses nothing
+  if (!session || !session->IsPresented() || !winSystem)
     return CScreenshotSurfaceGLES::TakePixels(spec, result);
+  // only 8-bit readbacks get the video, and a native screenshot fails without it
+  if (m_format != AV_PIX_FMT_RGBA && m_format != AV_PIX_FMT_BGRA)
+  {
+    if (spec.screenshot == CaptureScreenshot::NATIVE)
+    {
+      CLog::Log(LOGWARNING, "CScreenshotSurfaceAML::{}: no native screenshot of a deep readback",
+                __FUNCTION__);
+      result.pixels = std::make_shared<CHeapCapturePixels>(nullptr);
+    }
+    else
+      CScreenshotSurfaceGLES::TakePixels(spec, result);
+    return;
+  }
 
   GuiReadback gui;
   gui.pixels.reset(TakeBuffer());
@@ -276,15 +452,21 @@ void CScreenshotSurfaceAML::TakePixels(const CaptureSpec& spec, CaptureResult& r
     gui.coding.transfer = AMLCaptureCoding::Transfer::PQ;
   else if (transfer == AVCOL_TRC_ARIB_STD_B67)
     gui.coding.transfer = AMLCaptureCoding::Transfer::HLG;
-  gui.coding.whiteNits = winSystem->GetGuiCompositePeak() * PQ_PEAK_NITS;
+  // an SDR GUI over an HDR signal sits at the GUI's SDR white
+  const float white =
+      transfer ? winSystem->GetGuiCompositePeak()
+               : CGuiCompositeShaderGLES::PeakFromPQCode(winSystem->GetGuiSdrPeakLuminance());
+  gui.coding.whiteNits = white * PQ_PEAK_NITS;
   gui.video = session->GetVisibleRect();
   CAMLCapture::GetCaptureSize(gui.streamWidth, gui.streamHeight);
+  gui.shot = spec.screenshot;
 
+  const bool rgb = spec.screenshot == CaptureScreenshot::STANDARD;
   result.pixels = std::make_shared<CAMLCompositePixels>(session, session->Lease(), std::move(gui));
   result.width = static_cast<unsigned int>(m_width);
   result.height = static_cast<unsigned int>(m_height);
-  result.stride = m_width * 4;
-  result.format = AV_PIX_FMT_RGBA;
+  result.stride = m_width * (rgb ? 3 : 4);
+  result.format = rgb ? AV_PIX_FMT_RGB24 : AV_PIX_FMT_RGBA;
   result.color.primaries = AVCOL_PRI_BT709;
   result.color.transfer = AVCOL_TRC_IEC61966_2_1;
   result.color.range = AVCOL_RANGE_JPEG;

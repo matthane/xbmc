@@ -176,6 +176,7 @@ bool CRendererAML::CaptureVideoFrame(const KODI::RENDERING::CAPTURE::CaptureSpec
   AMLCaptureVideoSpec video;
   video.rect = CRect(0.0f, 0.0f, visible.Width(), visible.Height());
   video.continuous = spec.cadence == CaptureCadence::CONTINUOUS;
+  video.shot = spec.screenshot;
   video.width = spec.width ? static_cast<int>(spec.width)
                            : std::max(2, static_cast<int>(video.rect.Width() * captureWidth));
   video.height = spec.height ? static_cast<int>(spec.height)

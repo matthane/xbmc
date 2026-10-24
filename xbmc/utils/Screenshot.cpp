@@ -23,10 +23,12 @@
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
 #include "settings/windows/GUIControlSettings.h"
+#include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
 #include "utils/log.h"
 
 #include <memory>
+#include <string_view>
 
 std::vector<std::function<std::unique_ptr<IScreenshotSurface>()>> CScreenShot::m_screenShotSurfaces;
 
@@ -44,6 +46,10 @@ std::unique_ptr<IScreenshotSurface> CScreenShot::CreateSurface()
 
 namespace
 {
+#if defined(HAS_LIBAMCODEC)
+constexpr int SCREENSHOT_TYPE_NATIVE = 1;
+#endif
+
 // Map a capture's source coding to the encoder's XB_FMT input format.
 unsigned int CaptureXbFormat(AVPixelFormat format)
 {
@@ -53,8 +59,12 @@ unsigned int CaptureXbFormat(AVPixelFormat format)
       return XB_FMT_A8R8G8B8;
     case AV_PIX_FMT_RGBA:
       return XB_FMT_RGBA8;
+    case AV_PIX_FMT_RGB24:
+      return XB_FMT_RGB8;
     case AV_PIX_FMT_RGBA64LE:
       return XB_FMT_RGBA16;
+    case AV_PIX_FMT_RGB48BE:
+      return XB_FMT_RGB16BE;
     case AV_PIX_FMT_X2BGR10LE:
       return XB_FMT_X2BGR10;
     default:
@@ -62,15 +72,31 @@ unsigned int CaptureXbFormat(AVPixelFormat format)
   }
 }
 
+// the next free auto name in dir; the suffix is part of the numbering pattern, so each suffix
+// numbers on its own and no name is reused
+std::string NextScreenshotName(const std::string& dir, std::string_view suffix)
+{
+  const std::string file = CUtil::GetNextFilename(
+      URIUtils::AddFileToFolder(dir, StringUtils::Format("screenshot{{:05}}{}.png", suffix)),
+      65535);
+  if (file.empty())
+    CLog::Log(LOGWARNING, "Too many screen shots or invalid folder");
+  else
+    CLog::Log(LOGDEBUG, "Saving screenshot {}", CURL::GetRedacted(file));
+  return file;
+}
+
 // Encode a delivered capture to the destination file; runs on the capture
-// service's callback worker.
-void WriteCapture(const KODI::RENDERING::CAPTURE::CaptureResult& result,
-                  const std::string& filename)
+// service's callback worker. With autoName, path is the folder, and the file in it is named once
+// the pixels of a native screenshot tell whether they are display-mapped.
+void WriteCapture(KODI::RENDERING::CAPTURE::CaptureResult result,
+                  const std::string& path,
+                  bool autoName = false)
 {
   using namespace KODI::RENDERING::CAPTURE;
   if (!result.pixels)
   {
-    CLog::Log(LOGERROR, "Unable to write screenshot {}: no pixels", CURL::GetRedacted(filename));
+    CLog::Log(LOGERROR, "Unable to write screenshot {}: no pixels", CURL::GetRedacted(path));
     return;
   }
 
@@ -78,23 +104,31 @@ void WriteCapture(const KODI::RENDERING::CAPTURE::CaptureResult& result,
   if (!lock.data())
   {
     CLog::Log(LOGERROR, "Unable to write screenshot {}: pixel lock failed",
-              CURL::GetRedacted(filename));
+              CURL::GetRedacted(path));
     return;
   }
+
+  std::string_view suffix;
+  if (result.pixels->Describe(result))
+    suffix = result.displayMapped ? "-native-mapped" : "-native-raw";
+  const std::string file = autoName ? NextScreenshotName(path, suffix) : path;
+  if (file.empty())
+    return;
 
   // OPAQUE: the encoder drops the framebuffer alpha through an X-variant source
   const unsigned int format = CaptureXbFormat(result.format) | XB_FMT_OPAQUE;
   const uint8_t* src0 = CaptureSrcRow0(lock.data(), result.stride, result.height);
 
   if (!CPicture::CreateThumbnailFromSurface(src0, result.width, result.height,
-                                            static_cast<unsigned int>(result.stride), filename,
-                                            format, result.color))
-    CLog::Log(LOGERROR, "Unable to write screenshot {}", CURL::GetRedacted(filename));
+                                            static_cast<unsigned int>(result.stride), file, format,
+                                            result.color))
+    CLog::Log(LOGERROR, "Unable to write screenshot {}", CURL::GetRedacted(file));
 }
 } // namespace
 
 void CScreenShot::TakeScreenshot(const std::string& filename,
-                                 KODI::RENDERING::CAPTURE::CaptureContent content)
+                                 KODI::RENDERING::CAPTURE::CaptureContent content,
+                                 KODI::RENDERING::CAPTURE::CaptureScreenshot type)
 {
   using namespace KODI::RENDERING::CAPTURE;
 
@@ -112,6 +146,7 @@ void CScreenShot::TakeScreenshot(const std::string& filename,
   CaptureSpec spec;
   spec.content = content;
   spec.format = CaptureFormat::NATIVE;
+  spec.screenshot = type;
 
   // failure dispatches an empty result because some consumers must act on
   // it (a bookmark still writes its DB row); here WriteCapture declines it
@@ -147,10 +182,19 @@ std::string ResolveScreenshotDir()
 
 void CScreenShot::TakeScreenshot()
 {
-  TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE);
+  using namespace KODI::RENDERING::CAPTURE;
+
+  CaptureScreenshot type = CaptureScreenshot::STANDARD;
+#if defined(HAS_LIBAMCODEC)
+  if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetInt(
+          CSettings::SETTING_COREELEC_AMLOGIC_SCREENSHOTTYPE) == SCREENSHOT_TYPE_NATIVE)
+    type = CaptureScreenshot::NATIVE;
+#endif
+  TakeScreenshot(CaptureContent::COMPOSITE, type);
 }
 
-void CScreenShot::TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent content)
+void CScreenShot::TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent content,
+                                 KODI::RENDERING::CAPTURE::CaptureScreenshot type)
 {
   using namespace KODI::RENDERING::CAPTURE;
 
@@ -161,6 +205,7 @@ void CScreenShot::TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent conten
   CaptureSpec spec;
   spec.content = content;
   spec.format = CaptureFormat::NATIVE;
+  spec.screenshot = type;
 
   // Submitted before any filesystem work so the readback grabs the current frame;
   // the folder dialog (when the path is unset), naming, and write all run in the
@@ -177,15 +222,7 @@ void CScreenShot::TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent conten
                                  CLog::Log(LOGWARNING, "No screenshot path configured");
                                  return;
                                }
-                               const std::string file = CUtil::GetNextFilename(
-                                   URIUtils::AddFileToFolder(dir, "screenshot{:05}.png"), 65535);
-                               if (file.empty())
-                               {
-                                 CLog::Log(LOGWARNING, "Too many screen shots or invalid folder");
-                                 return;
-                               }
-                               CLog::Log(LOGDEBUG, "Saving screenshot {}", CURL::GetRedacted(file));
-                               WriteCapture(result, file);
+                               WriteCapture(result, dir, true);
                              });
   handle->Detach();
 }
