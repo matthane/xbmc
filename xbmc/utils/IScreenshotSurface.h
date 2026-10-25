@@ -8,6 +8,12 @@
 
 #pragma once
 
+#include "rendering/capture/CapturePixels.h"
+#include "rendering/capture/CaptureTypes.h"
+
+#include <cstdint>
+#include <memory>
+
 extern "C"
 {
 #include <libavutil/pixfmt.h>
@@ -32,6 +38,14 @@ public:
   //! fully rendered frame and render-thread context.
   virtual bool Read(const ScreenshotContext& ctx) { return false; }
 
+  //! \brief Render thread: serve a capture without the framebuffer readback, e.g. from a
+  //! display writeback. False leaves it to Read; true with no pixels fails the request.
+  virtual bool CaptureDirect(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                             KODI::RENDERING::CAPTURE::CaptureResult& result)
+  {
+    return false;
+  }
+
   int GetWidth() const { return m_width; }
   int GetHeight() const { return m_height; }
   //! signed linesize; negative when the delivered rows are bottom-up
@@ -46,6 +60,20 @@ public:
     unsigned char* buffer = m_buffer;
     m_buffer = nullptr;
     return buffer;
+  }
+
+  //! \brief Hand the pixels for spec to result with their size and format; a surface may defer
+  //! the read to Lock(). result arrives tagged as the output; a surface whose pixels are coded
+  //! otherwise retags it.
+  virtual void TakePixels(const KODI::RENDERING::CAPTURE::CaptureSpec& spec,
+                          KODI::RENDERING::CAPTURE::CaptureResult& result)
+  {
+    result.pixels = std::make_shared<KODI::RENDERING::CAPTURE::CHeapCapturePixels>(
+        std::unique_ptr<uint8_t[]>(TakeBuffer()));
+    result.width = static_cast<unsigned int>(m_width);
+    result.height = static_cast<unsigned int>(m_height);
+    result.stride = m_stride;
+    result.format = m_format;
   }
 
 protected:
