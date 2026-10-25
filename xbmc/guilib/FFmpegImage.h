@@ -96,5 +96,5 @@ private:
   AVCodecContext* m_codec_ctx = nullptr;
 
   AVFrame* m_pFrame;
-  uint8_t* m_outputBuffer;
+  AVPacket* m_outputPacket = nullptr;
 };

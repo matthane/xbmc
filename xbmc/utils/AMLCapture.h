@@ -47,6 +47,26 @@ struct AMLCaptureFrame
   AMLCaptureColor color;
 };
 
+//! A 10-bit vdin1 frame copied out of its stream
+struct AMLCaptureShotFrame
+{
+  //! frame.image points into data
+  std::unique_ptr<uint8_t[]> data;
+  AMLCaptureFrame frame;
+};
+
+//! What only the read of a native screenshot knows about its pixels
+struct AMLCaptureNative
+{
+  bool resolved{false};
+  AMLCaptureColor color;
+  int width{0};
+  int height{0};
+
+  //! once resolved, width x height RGB48BE pixels in the signal's own coding
+  bool Describe(KODI::RENDERING::CAPTURE::CaptureResult& result) const;
+};
+
 struct AMLCaptureVideoSpec
 {
   int width{0};
@@ -54,6 +74,8 @@ struct AMLCaptureVideoSpec
   //! the visible video, normalized to the output; vdin1 holds it at the frame origin
   CRect rect;
   bool continuous{false};
+  KODI::RENDERING::CAPTURE::CaptureScreenshot shot{
+      KODI::RENDERING::CAPTURE::CaptureScreenshot::NONE};
 };
 
 //! \brief The process-wide capture session on the vdin1 V4L2 node: video after the VPP and the
@@ -101,11 +123,23 @@ public:
   //! the input's continuous size when larger, else wait for the next one, and run `use` on it. An
   //! input or size change restarts the stream. A wait ends after a bound of output frame periods.
   bool Read(AMLCaptureInput input, int width, int height, const ReadFunc& use);
+  //! Consumer thread: copy out a frame of a one-shot 10-bit video stream. NATIVE reads the
+  //! output size up to 2160p, else the largest capture size when vdin1 refuses that; STANDARD
+  //! reads the largest capture size. The stream closes before this returns; a continuous reader
+  //! reopens its own.
+  bool ReadShot(KODI::RENDERING::CAPTURE::CaptureScreenshot shot, AMLCaptureShotFrame& frame);
+  //! Consumer thread: run `use` on the frame of a shot, else, or when that fails, on a Read of
+  //! the video at width x height.
+  bool ReadVideo(KODI::RENDERING::CAPTURE::CaptureScreenshot shot,
+                 int width,
+                 int height,
+                 const ReadFunc& use);
 
-  //! The crop of an NV12 image to a normalized rect, on even pixels for the chroma plane
+  //! The crop of an NV12 or full pack image to a normalized rect, on even pixels for the chroma
   static AMLCaptureImage Crop(const AMLCaptureImage& image, const CRect& rect);
 
-  //! Deferred sRGB BGRA pixels of the visible video in result.
+  //! Deferred sRGB pixels of the visible video in result: BGRA, RGB24 for a STANDARD shot; a
+  //! NATIVE shot describes its own.
   void CreateVideoPixels(const AMLCaptureVideoSpec& spec,
                          KODI::RENDERING::CAPTURE::CaptureResult& result);
 
@@ -118,10 +152,25 @@ public:
 
 private:
   class CStream;
+  using StreamFunc =
+      std::function<bool(CStream& stream, unsigned int index, const AMLCaptureFrame& frame)>;
 
   void ReleaseLease(AMLCaptureInput input, int width, int height);
+  //! m_readLock must be held; `use` runs on buffer `index`, which is queued again after it.
+  //! `refused` tells that vdin1 cannot give this input at this size. With `logCause`, it logs why
+  //! it gets no frame; a native shot does not fall back
+  bool ReadStream(AMLCaptureInput input,
+                  uint32_t pixelFormat,
+                  unsigned int buffers,
+                  int width,
+                  int height,
+                  const StreamFunc& use,
+                  bool& refused,
+                  bool logCause = false);
   //! m_lock must be held
   bool CanRead(AMLCaptureInput input) const;
+  //! m_lock must be held; false, after logging why the video cannot be read when `log`
+  bool Unreadable(bool log) const;
   //! takes m_stream for Close; m_lock must be held
   std::shared_ptr<CStream> TakeStream();
   void Close(std::shared_ptr<CStream> stream);

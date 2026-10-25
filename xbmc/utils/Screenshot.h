@@ -24,12 +24,17 @@ public:
   //! \brief Create the platform's capture readback surface, null when none registered.
   static std::unique_ptr<IScreenshotSurface> CreateSurface();
 
+  //! \brief Screenshot of the configured type into the configured folder.
   static void TakeScreenshot();
   //! \brief Screenshot of the given content into the configured folder.
-  static void TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent content);
+  static void TakeScreenshot(KODI::RENDERING::CAPTURE::CaptureContent content,
+                             KODI::RENDERING::CAPTURE::CaptureScreenshot type =
+                                 KODI::RENDERING::CAPTURE::CaptureScreenshot::STANDARD);
   static void TakeScreenshot(const std::string& filename,
                              KODI::RENDERING::CAPTURE::CaptureContent content =
-                                 KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE);
+                                 KODI::RENDERING::CAPTURE::CaptureContent::COMPOSITE,
+                             KODI::RENDERING::CAPTURE::CaptureScreenshot type =
+                                 KODI::RENDERING::CAPTURE::CaptureScreenshot::STANDARD);
 
   //! \brief Capture the video-only image and the full composite from the same
   //! rendered frame into two files in the configured folder

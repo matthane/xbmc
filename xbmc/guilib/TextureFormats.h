@@ -24,6 +24,7 @@ enum XB_FMT
   XB_FMT_RGB8        = 0x80,
   XB_FMT_RGBA16      = 0x100, // 16-bit per channel RGBA (for 10-bit+ screenshot capture)
   XB_FMT_X2BGR10     = 0x200, // packed 2:10:10:10 (raw 10-bit screenshot capture)
+  XB_FMT_RGB16BE     = 0x400, // 16-bit per channel big-endian RGB (the rows of a 16-bit PNG)
   XB_FMT_MASK        = 0xFFFF,
   XB_FMT_OPAQUE      = 0x10000,
 };

@@ -9155,6 +9155,26 @@ msgctxt "#14427"
 msgid "Player-Led"
 msgstr ""
 
+#: system/settings/settings.xml
+msgctxt "#14428"
+msgid "Screenshot type"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14429"
+msgid "Select the type of screenshot to take. Standard saves an SDR image up to 1080p. Native keeps the output resolution up to 4K, with 10-bit precision and HDR when the picture is HDR."
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14430"
+msgid "Standard"
+msgstr ""
+
+#: system/settings/settings.xml
+msgctxt "#14431"
+msgid "Native"
+msgstr ""
+
 #: xbmc/music/MusicDatabase.cpp
 #: xbmc/video/VideoDatabase.cpp
 msgctxt "#15011"

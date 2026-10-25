@@ -58,6 +58,14 @@ enum class CaptureFormat
   NATIVE, //!< the output surface's coding at its native depth
 };
 
+//! The screenshot type a platform builds; captures other than screenshots leave it NONE
+enum class CaptureScreenshot
+{
+  NONE,
+  STANDARD, //!< what the user sees
+  NATIVE, //!< the output at its own size and coding, where the platform can tell them apart
+};
+
 struct CaptureSpec
 {
   CaptureContent content{CaptureContent::COMPOSITE};
@@ -66,6 +74,7 @@ struct CaptureSpec
   unsigned int width{0};
   unsigned int height{0};
   CaptureFormat format{CaptureFormat::BGRA8};
+  CaptureScreenshot screenshot{CaptureScreenshot::NONE};
 };
 
 struct CaptureResult
@@ -85,6 +94,8 @@ struct CaptureResult
   //! the pixels read the newest frame on every Lock, so a consumer may copy them again without
   //! waiting for a delivery; a delivery comes only with a drawn frame
   bool live{false};
+  //! the pixels went through a display mapping, not only the output coding
+  bool displayMapped{false};
   //! HDR mastering/light metadata of the captured content, carried verbatim so
   //! an SDR tonemap has the same source peak the thumbnail extractor uses
   bool hasDisplayMetadata{false};
