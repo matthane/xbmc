@@ -49,6 +49,7 @@ public:
 
 CVideoPlayerVideo::CVideoPlayerVideo(CDVDClock* pClock,
                                      CDVDOverlayContainer* pOverlayContainer,
+                                     CDVDOverlayContainer* pMenuOverlayContainer,
                                      CDVDMessageQueue& parent,
                                      CRenderManager& renderManager,
                                      CProcessInfo& processInfo,
@@ -61,6 +62,7 @@ CVideoPlayerVideo::CVideoPlayerVideo(CDVDClock* pClock,
 {
   m_pClock = pClock;
   m_pOverlayContainer = pOverlayContainer;
+  m_pMenuOverlayContainer = pMenuOverlayContainer;
   m_speed = DVD_PLAYSPEED_NORMAL;
 
   m_bRenderSubs = false;
@@ -921,6 +923,8 @@ void CVideoPlayerVideo::ProcessOverlays(const VideoPicture* pSource, double pts)
 
     m_pOverlayContainer->GetOverlaysAt(matchPts, m_iSubtitleDelay, m_bRenderSubs, overlays,
                                        pSource->m_3dSubtitleDepth);
+    m_pMenuOverlayContainer->GetOverlaysAt(matchPts, m_iSubtitleDelay, m_bRenderSubs, overlays,
+                                           pSource->m_3dSubtitleDepth);
 
     for (auto it = overlays.begin(); it != overlays.end(); ++it)
     {

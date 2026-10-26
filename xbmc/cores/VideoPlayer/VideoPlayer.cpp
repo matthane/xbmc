@@ -732,9 +732,9 @@ void CVideoPlayer::CreatePlayers()
   if (m_players_created)
     return;
 
-  m_VideoPlayerVideo =
-      std::make_unique<CVideoPlayerVideo>(&m_clock, &m_overlayContainer, m_messenger,
-                                          m_renderManager, *m_processInfo, m_messageQueueTimeSize);
+  m_VideoPlayerVideo = std::make_unique<CVideoPlayerVideo>(
+      &m_clock, &m_overlayContainer, &m_menuOverlayContainer, m_messenger, m_renderManager,
+      *m_processInfo, m_messageQueueTimeSize);
   m_VideoPlayerAudio = std::make_unique<CVideoPlayerAudio>(&m_clock, m_messenger, *m_processInfo,
                                                            m_messageQueueTimeSize);
   m_VideoPlayerSubtitle =
@@ -1576,6 +1576,7 @@ void CVideoPlayer::Prepare()
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
+  m_menuOverlayContainer.Clear();
 
   IPlayerCallback *cb = &m_callback;
   CFileItem fileItem = m_item;
@@ -3218,6 +3219,7 @@ void CVideoPlayer::OnExit()
   if (m_pInputStream.use_count() > 1)
     throw std::runtime_error("m_pInputStream reference count is greater than 1");
   m_pInputStream.reset();
+  m_menuOverlayContainer.Clear();
 
   // clean up all selection streams
   m_SelectionStreams.Clear(StreamType::NONE, STREAM_SOURCE_NONE);
@@ -5013,9 +5015,14 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
     switch (iMessage)
     {
     case BD_EVENT_MENU_OVERLAY:
-      m_overlayContainer.ProcessAndAddOverlayIfValid(
+    {
+      // each flush carries both planes in full, a render pass sees the old page or the new one
+      std::unique_lock lock(m_menuOverlayContainer);
+      m_menuOverlayContainer.Clear();
+      m_menuOverlayContainer.ProcessAndAddOverlayIfValid(
           *static_cast<std::shared_ptr<CDVDOverlay>*>(pData));
       break;
+    }
     case BD_EVENT_MENU:
       // Interactive menu visible?
       if (*static_cast<uint32_t*>(pData) == false)

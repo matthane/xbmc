@@ -634,6 +634,8 @@ protected:
 
   CDVDClock m_clock;
   CDVDOverlayContainer m_overlayContainer;
+  // blu-ray menu pages, they live until libbluray replaces them
+  CDVDOverlayContainer m_menuOverlayContainer;
 
   std::shared_ptr<CDVDInputStream> m_pInputStream;
   std::unique_ptr<CDVDDemux> m_pDemuxer;

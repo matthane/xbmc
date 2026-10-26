@@ -173,6 +173,7 @@ CMediaPipelineWebOS::CMediaPipelineWebOS(CProcessInfo& processInfo,
                                          CDVDClock& clock,
                                          CDVDMessageQueue& parent,
                                          CDVDOverlayContainer& overlay,
+                                         CDVDOverlayContainer& menuOverlay,
                                          const bool hasAudio)
   : CThread("MediaPipelineWebOS"),
     m_mediaAPIs(std::make_unique<StarfishMediaAPIs>()),
@@ -183,6 +184,7 @@ CMediaPipelineWebOS::CMediaPipelineWebOS(CProcessInfo& processInfo,
     m_renderManager(renderManager),
     m_clock(clock),
     m_overlayContainer(overlay),
+    m_menuOverlayContainer(menuOverlay),
     m_hasAudio(hasAudio)
 {
   m_messageQueueAudio.Init();
@@ -1271,6 +1273,7 @@ void CMediaPipelineWebOS::ProcessOverlays(const double pts) const
   std::scoped_lock<CCriticalSection> lock(m_overlayContainer);
 
   m_overlayContainer.GetOverlaysAt(pts, m_subtitleDelay, m_subtitle, overlays);
+  m_menuOverlayContainer.GetOverlaysAt(pts, m_subtitleDelay, m_subtitle, overlays);
 
   for (const std::shared_ptr<CDVDOverlay>& overlay : overlays)
   {

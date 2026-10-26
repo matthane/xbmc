@@ -49,7 +49,8 @@ void CVideoPlayerWebOS::CreatePlayers()
     if (!m_mediaPipelineWebOS)
     {
       m_mediaPipelineWebOS = std::make_unique<CMediaPipelineWebOS>(
-          *m_processInfo, m_renderManager, m_clock, m_messenger, m_overlayContainer, hasAudio);
+          *m_processInfo, m_renderManager, m_clock, m_messenger, m_overlayContainer,
+          m_menuOverlayContainer, hasAudio);
       m_VideoPlayerVideo =
           std::make_unique<CVideoPlayerVideoWebOS>(*m_mediaPipelineWebOS, *m_processInfo);
       m_VideoPlayerAudio =
@@ -62,8 +63,8 @@ void CVideoPlayerWebOS::CreatePlayers()
   {
     m_mediaPipelineWebOS = nullptr;
     m_VideoPlayerVideo = std::make_unique<CVideoPlayerVideo>(
-        &m_clock, &m_overlayContainer, m_messenger, m_renderManager, *m_processInfo,
-        m_messageQueueTimeSize);
+        &m_clock, &m_overlayContainer, &m_menuOverlayContainer, m_messenger, m_renderManager,
+        *m_processInfo, m_messageQueueTimeSize);
     m_VideoPlayerAudio = std::make_unique<CVideoPlayerAudio>(&m_clock, m_messenger, *m_processInfo,
                                                              m_messageQueueTimeSize);
   }

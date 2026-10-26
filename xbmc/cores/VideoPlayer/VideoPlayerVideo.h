@@ -47,6 +47,7 @@ class CVideoPlayerVideo : public CThread, public IDVDStreamPlayerVideo
 public:
   CVideoPlayerVideo(CDVDClock* pClock,
                     CDVDOverlayContainer* pOverlayContainer,
+                    CDVDOverlayContainer* pMenuOverlayContainer,
                     CDVDMessageQueue& parent,
                     CRenderManager& renderManager,
                     CProcessInfo& processInfo,
@@ -81,6 +82,7 @@ public:
 
   // classes
   CDVDOverlayContainer* m_pOverlayContainer;
+  CDVDOverlayContainer* m_pMenuOverlayContainer;
   CDVDClock* m_pClock;
 
 protected:
