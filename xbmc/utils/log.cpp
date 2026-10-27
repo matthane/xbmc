@@ -273,6 +273,12 @@ Logger CLog::GetLoggerById(uint32_t component)
 Logger CLog::GetLogger(const std::string& loggerName)
 {
   auto logger = spdlog::get(loggerName);
+  if (logger != nullptr)
+    return logger;
+
+  // spdlog throws if two threads register the same name
+  std::unique_lock lock(m_loggerMutex);
+  logger = spdlog::get(loggerName);
   if (logger == nullptr)
     logger = CreateLogger(loggerName);
 
