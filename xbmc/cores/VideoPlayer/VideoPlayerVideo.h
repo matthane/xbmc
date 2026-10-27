@@ -78,6 +78,7 @@ public:
   int  GetDataLevel() const { return m_messageQueue.GetLevel(true); }
   void SetMaxDataSize(int iMaxDataSize) { m_messageQueue.SetMaxDataSize(iMaxDataSize); }
   int GetMaxDataSize() const { return m_messageQueue.GetMaxDataSize(); }
+  void SetNavMode(bool navMode) override { m_navMode = navMode; }
 
   // classes
   CDVDOverlayContainer* m_pOverlayContainer;
@@ -134,6 +135,7 @@ protected:
   std::atomic_bool m_stalled = false;
   std::atomic_bool m_rewindStalled;
   bool m_paused;
+  bool m_navMode{false};
   IDVDStreamPlayer::ESyncState m_syncState;
   std::atomic_bool m_bAbortOutput;
 
@@ -150,4 +152,5 @@ protected:
   VideoPicture m_picture;
 
   EOutputState m_outputSate{OUTPUT_NORMAL};
+  bool m_noPicture{false};
 };

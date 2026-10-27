@@ -457,6 +457,7 @@ void CDVDInputStreamBluray::FreeTitleInfo()
 
   m_titleInfo = nullptr;
   m_clip = nullptr;
+  m_endedTitleTime = 0;
   FreeClipInfo();
 }
 
@@ -486,6 +487,7 @@ void CDVDInputStreamBluray::UpdateClipInfo(unsigned int playItem)
 void CDVDInputStreamBluray::ProcessEvent() {
 
   int pid = -1, ret;
+  const bool titleEndWait = m_titleEndWait;
   switch (m_event.event) {
 
    /* errors */
@@ -502,6 +504,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     }
     CLog::Log(LOGERROR, "CDVDInputStreamBluray - BD_EVENT_ERROR: Fatal error. Playback can't be continued.");
     m_hold = HOLD_ERROR;
+    m_titleEndWait = false;
     break;
 
   case BD_EVENT_READ_ERROR:
@@ -532,6 +535,7 @@ void CDVDInputStreamBluray::ProcessEvent() {
     //m_player->OnDVDNavResult(nullptr, 1);
     //bd_read_skip_still(m_bd);
     //m_hold = HOLD_HELD;
+    m_titleEndWait = false;
     break;
 
   case BD_EVENT_STILL_TIME:
@@ -573,7 +577,12 @@ void CDVDInputStreamBluray::ProcessEvent() {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_END_OF_TITLE {}", m_event.param);
     /* when a title ends, playlist WILL eventually change */
     if (m_navmode)
+    {
+      // the player still plays the title out of its queues until the next stream
+      const int totalTime = GetTotalTime();
       FreeTitleInfo();
+      m_endedTitleTime = totalTime;
+    }
     break;
 
   case BD_EVENT_TITLE:
@@ -603,16 +612,20 @@ void CDVDInputStreamBluray::ProcessEvent() {
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_PLAYLIST {}", m_event.param);
     m_playlist = m_event.param;
     ProcessItem(m_playlist);
+    m_titleEndWait = false;
     break;
 
   case BD_EVENT_PLAYITEM:
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_PLAYITEM {}", m_event.param);
+    m_titleEndWait = false;
     if (m_titleInfo && m_event.param < m_titleInfo->clip_count)
     {
       m_clip = &m_titleInfo->clips[m_event.param];
       UpdateClipInfo(m_event.param);
-      OpenClipSpan();
     }
+    else
+      m_clip = nullptr;
+    OpenClipSpan();
     uint64_t clip_start, clip_in, bytepos;
     ret = bd_get_clip_infos(m_bd, m_event.param, &clip_start, &clip_in, &bytepos, nullptr);
     if (ret)
@@ -681,14 +694,19 @@ void CDVDInputStreamBluray::ProcessEvent() {
   case BD_EVENT_SECONDARY_VIDEO:
   case BD_EVENT_SECONDARY_VIDEO_SIZE:
   case BD_EVENT_SECONDARY_VIDEO_STREAM:
-  case BD_EVENT_PLAYMARK:
   case BD_EVENT_KEY_INTEREST_TABLE:
   case BD_EVENT_UO_MASK_CHANGED:
+    break;
+
+  case BD_EVENT_PLAYMARK:
+    // a seek the disc program makes at a mark is not the answer to a key
+    m_menuInput = false;
     break;
 
   case BD_EVENT_PLAYLIST_STOP:
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray - BD_EVENT_PLAYLIST_STOP: flush buffers");
     m_player->OnDiscNavResult(nullptr, BD_EVENT_PLAYLIST_STOP);
+    m_titleEndWait = false;
     break;
   case BD_EVENT_NONE:
     break;
@@ -698,6 +716,10 @@ void CDVDInputStreamBluray::ProcessEvent() {
               m_event.event, m_event.param);
     break;
   }
+
+  // an event that ends the wait holds the old demuxer until the next stream opens
+  if (titleEndWait && !m_titleEndWait && m_hold != HOLD_ERROR)
+    m_hold = HOLD_HELD;
 
   /* event has been consumed */
   m_event.event = BD_EVENT_NONE;
@@ -722,7 +744,16 @@ void CDVDInputStreamBluray::DisableExtention()
   m_bMVCPlayback = false;
 }
 
+// counted after the events of the read have opened their clip spans
 int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
+{
+  const int result = ReadData(buf, buf_size);
+  if (result > 0)
+    m_readPos += result;
+  return result;
+}
+
+int CDVDInputStreamBluray::ReadData(uint8_t* buf, int buf_size)
 {
   int result = 0;
   if (m_navmode && !m_clipStart.empty() && !m_clipStartHeld && m_clipStartOffset == 0)
@@ -735,17 +766,26 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
     result = std::min(buf_size, static_cast<int>(m_clipStart.size() - m_clipStartOffset));
     std::copy_n(m_clipStart.data() + m_clipStartOffset, result, buf);
     m_clipStartOffset += result;
-    m_readPos += result;
     if (m_clipStartOffset == m_clipStart.size())
       m_clipStart.clear();
     return result;
   }
-  m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
+  // the packets a held demuxer plays out keep the time of the item they came from
+  const int dispTimeHeld = m_dispTimeBeforeRead;
+  if (!m_navmode || m_hold != HOLD_HELD)
+    m_dispTimeBeforeRead = static_cast<int>((bd_tell_time(m_bd) / 90));
   if(m_navmode)
   {
+    // the running demuxer plays on into the next play item of the title, a discontinuity holds it
+    const auto joinsInLine = [this, &result]
+    {
+      return result > 0 && !m_hasMVCExtension && m_titleInfo && m_clip &&
+             m_event.param < m_titleInfo->clip_count &&
+             m_event.param == static_cast<uint32_t>(m_clip - m_titleInfo->clips) + 1;
+    };
     do {
 
-      if (m_hold == HOLD_HELD)
+      if (m_hold == HOLD_HELD || m_titleEndWait)
          return 0;
 
       if(  m_hold == HOLD_ERROR
@@ -760,18 +800,38 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
         return result;
       }
 
+      // the disc program answers an activation key with its next seek, play item, playlist or title
+      const bool menuJump =
+          m_menuInput && (m_event.event == BD_EVENT_SEEK || m_event.event == BD_EVENT_TITLE ||
+                          m_event.event == BD_EVENT_PLAYLIST ||
+                          (m_event.event == BD_EVENT_PLAYITEM && !joinsInLine()));
+      if (menuJump)
+        m_menuInput = false;
+
       /* Check for holding events */
       switch(m_event.event) {
+        case BD_EVENT_PLAYITEM:
+          if (joinsInLine())
+            break;
+          [[fallthrough]];
         case BD_EVENT_SEEK:
         case BD_EVENT_TITLE:
         case BD_EVENT_ANGLE:
         case BD_EVENT_PLAYLIST:
-        case BD_EVENT_PLAYITEM:
+        case BD_EVENT_DISCONTINUITY:
           if(m_hold != HOLD_DATA)
           {
             m_hold = HOLD_HELD;
+            // a hold without data keeps the time the demuxer being closed already has
+            if (result == 0)
+              m_dispTimeBeforeRead = dispTimeHeld;
+            // a BD-J play item or seek with no data answers the key and leaves the item unplayed
+            if (result == 0 && menuJump && m_title && m_title->bdj &&
+                (m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_SEEK))
+              m_itemAbandoned = true;
             // the read starts the new play item, which the demuxer being closed must not consume
-            if (m_event.event == BD_EVENT_PLAYITEM && result > 0 && !m_hasMVCExtension)
+            if ((m_event.event == BD_EVENT_PLAYITEM || m_event.event == BD_EVENT_DISCONTINUITY) &&
+                result > 0 && !m_hasMVCExtension)
             {
               HoldClipStart(buf, result);
               return 0;
@@ -787,11 +847,18 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
             m_hold = HOLD_HELD;
           return result;
 
+        case BD_EVENT_END_OF_TITLE:
+          // a data read here ends the playlist for the disc program while the player still plays it
+          if (m_hold != HOLD_DATA && m_title && m_title->bdj)
+            m_titleEndWait = true;
+          break;
+
         default:
           break;
       }
 
       const bool queued = m_event.event != BD_EVENT_NONE && m_hold != HOLD_DATA;
+      bool playItemInLine = m_event.event == BD_EVENT_PLAYITEM && queued;
       if(result > 0)
         m_hold = HOLD_NONE;
 
@@ -802,6 +869,11 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
       {
         switch(m_event.event) {
           case BD_EVENT_PLAYITEM:
+            if (joinsInLine())
+            {
+              playItemInLine = true;
+              break;
+            }
             if(!m_hasMVCExtension)
             {
               m_hold = HOLD_HELD;
@@ -814,7 +886,13 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
           case BD_EVENT_ANGLE:
           case BD_EVENT_PLAYLIST:
           case BD_EVENT_STILL_TIME:
+          case BD_EVENT_DISCONTINUITY:
             m_hold = HOLD_HELD;
+            if (playItemInLine || (m_event.event == BD_EVENT_DISCONTINUITY && !m_hasMVCExtension))
+            {
+              HoldClipStart(buf, result);
+              return 0;
+            }
             return result;
 
           default:
@@ -842,8 +920,6 @@ int CDVDInputStreamBluray::Read(uint8_t* buf, int buf_size)
       HoldClipStart(buf, result);
       return 0;
     }
-    if (result > 0)
-      m_readPos += result;
   }
   return result;
 }
@@ -1132,7 +1208,7 @@ int CDVDInputStreamBluray::GetTotalTime()
   if(m_titleInfo)
     return static_cast<int>(m_titleInfo->duration / 90);
   else
-    return 0;
+    return m_endedTitleTime;
 }
 
 int CDVDInputStreamBluray::GetTime()
@@ -1435,9 +1511,6 @@ std::optional<CDVDInputStreamBluray::ClipTime> CDVDInputStreamBluray::GetClipTim
 // the bytes of the next Read come from m_clip, or carry no clip time without one
 void CDVDInputStreamBluray::OpenClipSpan()
 {
-  if (m_navmode)
-    return;
-
   ClipSpan span{m_readPos};
   if (m_clip)
     span.time = ClipTime{m_clip->in_time, m_clip->start_time};
@@ -1449,18 +1522,52 @@ CDVDInputStream::ENextStream CDVDInputStreamBluray::NextStream()
   if(!m_navmode || m_hold == HOLD_EXIT || m_hold == HOLD_ERROR)
     return NEXTSTREAM_NONE;
 
+  // the title the disc program ends on keeps its time until the next stream opens
+  const bool titleEndWait = m_titleEndWait;
+  if (!titleEndWait)
+    m_endedTitleTime = 0;
+
   /* process any current event */
   ProcessEvent();
+
+  // the old item has entered the decoders, so the disc program may learn the playlist ended
+  if (m_titleEndWait)
+  {
+    std::vector<uint8_t> buf(GetBlockSize());
+    const int result = bd_read_ext(m_bd, buf.data(), static_cast<int>(buf.size()), &m_event);
+    if (result < 0)
+    {
+      m_hold = HOLD_ERROR;
+      return NEXTSTREAM_NONE;
+    }
+    if (result > 0)
+    {
+      HoldClipStart(buf.data(), result);
+      m_titleEndWait = false;
+    }
+    ProcessEvent();
+  }
 
   /* process all queued up events */
   while(bd_get_event(m_bd, &m_event))
     ProcessEvent();
 
-  if(m_hold == HOLD_STILL)
+  if (m_hold == HOLD_STILL || m_titleEndWait)
     return NEXTSTREAM_RETRY;
 
+  if (titleEndWait)
+    m_endedTitleTime = 0;
+  m_menuInput = false;
+  m_itemAbandoned = false;
   m_hold = HOLD_DATA;
   return NEXTSTREAM_OPEN;
+}
+
+bool CDVDInputStreamBluray::TakeItemAbandoned()
+{
+  const bool abandoned = m_itemAbandoned;
+  m_itemAbandoned = false;
+  return abandoned;
 }
 
 void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
@@ -1468,6 +1575,10 @@ void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
   if(m_bd == nullptr || !m_navmode)
     return;
 
+  // only an activation key makes the disc program jump away from the item
+  if (vk == BD_VK_ENTER || vk == BD_VK_POPUP || vk == BD_VK_ROOT_MENU ||
+      (vk >= BD_VK_0 && vk <= BD_VK_9))
+    m_menuInput = true;
   int ret = bd_user_input(m_bd, -1, vk);
   if (ret < 0)
   {
@@ -1475,6 +1586,10 @@ void CDVDInputStreamBluray::UserInput(bd_vk_key_e vk)
   }
   else
   {
+    // a held discontinuity resets the demuxer still playing out, it and the events after it wait
+    // for the next stream
+    if (m_hold == HOLD_HELD && m_event.event == BD_EVENT_DISCONTINUITY)
+      return;
     // an event the input stream still holds for the player came first
     if (m_event.event != BD_EVENT_NONE)
       ProcessEvent();
@@ -1517,6 +1632,7 @@ bool CDVDInputStreamBluray::MouseClick(const CPoint &point)
     return false;
   }
 
+  m_menuInput = true;
   if (bd_user_input(m_bd, -1, BD_VK_MOUSE_ACTIVATE) >= 0)
     return true;
 
@@ -1531,6 +1647,8 @@ bool CDVDInputStreamBluray::OnMenu()
     CLog::Log(LOGDEBUG, "CDVDInputStreamBluray::OnMenu - navigation mode not enabled");
     return false;
   }
+
+  m_menuInput = true;
 
   // we can not use this event to track a possible popup menu state since bd-j blu-rays can
   // toggle the popup menu on their own without firing this event, and if they do this, our

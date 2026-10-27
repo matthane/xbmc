@@ -33,6 +33,7 @@
 #include "VideoPlayerRadioRDS.h"
 #include "VideoPlayerVideo.h"
 #include "application/Application.h"
+#include "cores/AudioEngine/Interfaces/AE.h"
 #include "cores/DataCacheCore.h"
 #include "cores/EdlEdit.h"
 #include "cores/FFmpeg.h"
@@ -981,6 +982,10 @@ bool CVideoPlayer::OpenInputStream()
     } // end loop over all subtitle files
   }
 
+  const auto menus = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream);
+  m_VideoPlayerVideo->SetNavMode(m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) && menus &&
+                                 menus->GetSupportedMenuType() == MenuType::NATIVE);
+
   m_clock.Reset();
   m_dvd.Clear();
 
@@ -1573,6 +1578,8 @@ void CVideoPlayer::Prepare()
   m_CurrentRadioRDS.hint.Clear();
   m_CurrentAudioID3.hint.Clear();
   m_SpeedState.Reset(DVD_NOPTS_VALUE);
+  m_navTail = false;
+  m_navStop = false;
   m_offset_pts = 0;
   m_CurrentAudio.lastdts = DVD_NOPTS_VALUE;
   m_CurrentVideo.lastdts = DVD_NOPTS_VALUE;
@@ -1764,6 +1771,14 @@ void CVideoPlayer::Process()
     if (m_bAbortRequest)
       break;
 
+    // a playlist stop flushes the old item once it is taken, by a message or by the read, and a
+    // packet read with it belongs to that item
+    if (m_navStop)
+    {
+      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+    }
+
     // should we open a new input stream?
     if (!m_pInputStream)
     {
@@ -1779,6 +1794,7 @@ void CVideoPlayer::Process()
     {
       if (m_pInputStream->NextStream() == CDVDInputStream::NEXTSTREAM_NONE)
         break;
+      m_navStop = false;
 
       if (m_pInputStream->IsEOF())
         break;
@@ -1858,6 +1874,15 @@ void CVideoPlayer::Process()
     DemuxPacket* pPacket = NULL;
     CDemuxStream *pStream = NULL;
     ReadPacket(pPacket, pStream);
+
+    if (m_navStop)
+    {
+      CDVDDemuxUtils::FreeDemuxPacket(pPacket);
+      FlushBuffers(DVD_NOPTS_VALUE, true, true);
+      m_navStop = false;
+      continue;
+    }
+
     if (pPacket && !pStream)
     {
       /* probably a empty packet, just free it and move on */
@@ -1874,9 +1899,17 @@ void CVideoPlayer::Process()
 
     if (!pPacket)
     {
+      // a menu jump of the disc program drops the old item instead of playing it out
+      if (TakeBlurayItemAbandoned())
+        FlushBuffers(DVD_NOPTS_VALUE, true, true);
+
       // when paused, demuxer could be be returning empty
       if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
+      {
+        if (m_navTail || IsBlurayTitleEndWait())
+          CThread::Sleep(10ms);
         continue;
+      }
 
       // check for a still frame state
       if (std::shared_ptr<CDVDInputStream::IMenus> pStream = std::dynamic_pointer_cast<CDVDInputStream::IMenus>(m_pInputStream))
@@ -1901,10 +1934,11 @@ void CVideoPlayer::Process()
         }
       }
 
-      // closing the old streams drops the queue of a player that is not in sync
+      // closing the old streams drops the queue of a player that is not in sync and blocks the
+      // player thread until the others play out
       if (m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY) &&
           m_State.menuType == MenuType::NATIVE &&
-          ShouldWaitForSync(std::chrono::steady_clock::now()))
+          (ShouldWaitForSync(std::chrono::steady_clock::now()) || PlayNavTail()))
       {
         CThread::Sleep(10ms);
         continue;
@@ -1922,6 +1956,7 @@ void CVideoPlayer::Process()
         CloseStream(m_CurrentVideo, true);
 
         m_syncStartPtsWait.reset();
+        m_navStop = false;
         m_CurrentAudio.Clear();
         m_CurrentVideo.Clear();
         m_CurrentSubtitle.Clear();
@@ -1931,7 +1966,8 @@ void CVideoPlayer::Process()
       // input stream asked us to just retry
       if(next == CDVDInputStream::NEXTSTREAM_RETRY)
       {
-        CThread::Sleep(100ms);
+        // a BD-J title end waits on the disc program, which acts on its own thread
+        CThread::Sleep(IsBlurayTitleEndWait() ? 10ms : 100ms);
         continue;
       }
 
@@ -1965,7 +2001,10 @@ void CVideoPlayer::Process()
     }
 
     if (STREAM_SOURCE_MASK(pStream->source) != STREAM_SOURCE_DEMUX_SUB)
+    {
       m_syncWait.reset();
+      m_navTail = false;
+    }
 
     // see if we can find something better to play
     CheckBetterStream(m_CurrentAudio,    pStream);
@@ -2329,6 +2368,94 @@ bool CVideoPlayer::ShouldWaitForSync(std::chrono::steady_clock::time_point now)
   if (!m_syncWait)
     m_syncWait = now;
   return true;
+}
+
+#if defined(HAVE_LIBBLURAY)
+std::shared_ptr<CDVDInputStreamBluray> CVideoPlayer::GetBlurayInputStream() const
+{
+  if (m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_BLURAY))
+    return std::static_pointer_cast<CDVDInputStreamBluray>(m_pInputStream);
+  return nullptr;
+}
+#endif
+
+bool CVideoPlayer::IsBlurayTitleEnded() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsTitleEnded();
+#else
+  return false;
+#endif
+}
+
+bool CVideoPlayer::IsBlurayTitleEndWait() const
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->IsTitleEndWait();
+#else
+  return false;
+#endif
+}
+
+bool CVideoPlayer::TakeBlurayItemAbandoned()
+{
+#if defined(HAVE_LIBBLURAY)
+  const auto bluray = GetBlurayInputStream();
+  return bluray && bluray->TakeItemAbandoned();
+#else
+  return false;
+#endif
+}
+
+// plays out the queues of the old item without blocking, as at the end of file; waits for the
+// players that CloseStream would wait for
+bool CVideoPlayer::PlayNavTail()
+{
+  const bool audio = m_CurrentAudio.id >= 0 &&
+                     m_CurrentAudio.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
+                     m_VideoPlayerAudio->HasData() && !CServiceBroker::GetActiveAE()->IsSuspended();
+  const bool video = m_CurrentVideo.id >= 0 &&
+                     m_CurrentVideo.syncState == IDVDStreamPlayer::SYNC_INSYNC &&
+                     m_VideoPlayerVideo->HasData();
+  if (m_playSpeed <= 0 || (!audio && !video))
+  {
+    m_navTail = false;
+    return false;
+  }
+
+  if (!m_navTail)
+  {
+    if (m_CurrentVideo.inited)
+      m_VideoPlayerVideo->SendMessage(std::make_shared<CDVDMsg>(CDVDMsg::VIDEO_DRAIN));
+
+    m_CurrentAudio.inited = false;
+    m_CurrentVideo.inited = false;
+    m_CurrentSubtitle.inited = false;
+    m_CurrentTeletext.inited = false;
+    m_CurrentRadioRDS.inited = false;
+    m_CurrentAudioID3.inited = false;
+    SetCaching(CACHESTATE_DONE);
+    m_navTail = true;
+  }
+  return true;
+}
+
+// picks and seeks in the tail are dropped, as they are once the demuxer closes for the reopen
+bool CVideoPlayer::DropInNavTail(CDVDMsg& msg)
+{
+  if (!m_navTail)
+    return false;
+
+  if (msg.IsType(CDVDMsg::PLAYER_SEEK))
+  {
+    m_processInfo->SetStateSeeking(false);
+    return true;
+  }
+  return msg.IsType(CDVDMsg::PLAYER_SEEK_CHAPTER) || msg.IsType(CDVDMsg::PLAYER_SET_AUDIOSTREAM) ||
+         msg.IsType(CDVDMsg::PLAYER_SET_VIDEOSTREAM) ||
+         msg.IsType(CDVDMsg::PLAYER_SET_SUBTITLESTREAM) || msg.IsType(CDVDMsg::PLAYER_SET_PROGRAM);
 }
 
 void CVideoPlayer::HandlePlaySpeed()
@@ -3245,6 +3372,9 @@ void CVideoPlayer::HandleMessages()
 
   while (m_messenger.Get(pMsg, 0ms) == MSGQ_OK)
   {
+    if (DropInNavTail(*pMsg))
+      continue;
+
     if (pMsg->IsType(CDVDMsg::PLAYER_OPENFILE) &&
         m_messenger.GetPacketCount(CDVDMsg::PLAYER_OPENFILE) == 0)
     {
@@ -4913,6 +5043,7 @@ bool CVideoPlayer::CloseStream(CCurrentStream& current, bool bWaitForBuffers)
 void CVideoPlayer::FlushBuffers(double pts, bool accurate, bool sync)
 {
   m_syncStartPtsWait.reset();
+  m_navTail = false;
   CLog::Log(LOGDEBUG, "CVideoPlayer::FlushBuffers - flushing buffers");
 
   double startpts;
@@ -5028,7 +5159,7 @@ int CVideoPlayer::OnDiscNavResult(void* pData, int iMessage)
     case BD_EVENT_PLAYLIST_STOP:
       m_dvd.state = DVDSTATE_NORMAL;
       m_dvd.iDVDStillTime = 0ms;
-      m_messenger.Put(std::make_shared<CDVDMsg>(CDVDMsg::GENERAL_FLUSH));
+      m_navStop = true;
       break;
     case BD_EVENT_AUDIO_STREAM:
       m_dvd.iSelectedAudioStream = *static_cast<int*>(pData);
@@ -6167,6 +6298,11 @@ void CVideoPlayer::UpdatePlayState(double timeout)
     state.canseek = true;
     state.canpause = true;
   }
+
+  // the ended title keeps its duration for pause, a seek after it or in the tail would act on the
+  // next item
+  if (IsBlurayTitleEnded() || m_navTail)
+    state.canseek = false;
 
   m_processInfo->SetPlayTimes(state.startTime, state.time, state.timeMin, state.timeMax);
 
