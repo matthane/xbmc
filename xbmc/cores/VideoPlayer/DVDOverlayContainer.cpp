@@ -46,11 +46,6 @@ void CDVDOverlayContainer::ProcessAndAddOverlayIfValid(const std::shared_ptr<CDV
   m_overlays.emplace_back(pOverlay);
 }
 
-VecOverlays* CDVDOverlayContainer::GetOverlays()
-{
-  return &m_overlays;
-}
-
 VecOverlays::iterator CDVDOverlayContainer::Remove(VecOverlays::iterator itOverlay)
 {
   std::unique_lock lock(*this);
@@ -100,6 +95,36 @@ void CDVDOverlayContainer::CleanUp(double pts)
     ++it;
   }
 
+}
+
+void CDVDOverlayContainer::GetOverlaysAt(double pts,
+                                         double subtitleDelay,
+                                         bool renderSubs,
+                                         VecOverlays& overlays,
+                                         std::optional<int> subtitleDepth)
+{
+  std::unique_lock lock(*this);
+
+  for (const std::shared_ptr<CDVDOverlay>& overlay : m_overlays)
+  {
+    if (!overlay->bForced && !renderSubs)
+      continue;
+
+    const double overlayPts = overlay->bForced ? pts : pts - subtitleDelay;
+
+    if (overlay->iPTSStartTime <= overlayPts &&
+        (overlay->iPTSStopTime > overlayPts || overlay->iPTSStopTime == 0LL))
+    {
+      if (subtitleDepth)
+        overlay->m_3dSubtitleDepth = *subtitleDepth;
+
+      if (overlay->IsOverlayType(DVDOVERLAY_TYPE_GROUP))
+        overlays.insert(overlays.end(), static_cast<CDVDOverlayGroup&>(*overlay).m_overlays.begin(),
+                        static_cast<CDVDOverlayGroup&>(*overlay).m_overlays.end());
+      else
+        overlays.push_back(overlay);
+    }
+  }
 }
 
 void CDVDOverlayContainer::Flush()

@@ -919,34 +919,10 @@ void CVideoPlayerVideo::ProcessOverlays(const VideoPicture* pSource, double pts)
   {
     std::unique_lock lock(*m_pOverlayContainer);
 
-    VecOverlays* pVecOverlays = m_pOverlayContainer->GetOverlays();
-    auto it = pVecOverlays->begin();
+    m_pOverlayContainer->GetOverlaysAt(matchPts, m_iSubtitleDelay, m_bRenderSubs, overlays,
+                                       pSource->m_3dSubtitleDepth);
 
-    //Check all overlays and render those that should be rendered, based on time and forced
-    //Both forced and subs should check timing
-    while (it != pVecOverlays->end())
-    {
-      std::shared_ptr<CDVDOverlay>& pOverlay = *it++;
-      if(!pOverlay->bForced && !m_bRenderSubs)
-        continue;
-
-      double pts2 = pOverlay->bForced ? matchPts : matchPts - m_iSubtitleDelay;
-
-      if((pOverlay->iPTSStartTime <= pts2 && (pOverlay->iPTSStopTime > pts2 || pOverlay->iPTSStopTime == 0LL)))
-      {
-
-        pOverlay->m_3dSubtitleDepth = pSource->m_3dSubtitleDepth;
-
-        if(pOverlay->IsOverlayType(DVDOVERLAY_TYPE_GROUP))
-          overlays.insert(overlays.end(),
-                          static_cast<CDVDOverlayGroup&>(*pOverlay).m_overlays.begin(),
-                          static_cast<CDVDOverlayGroup&>(*pOverlay).m_overlays.end());
-        else
-          overlays.push_back(pOverlay);
-      }
-    }
-
-    for(it = overlays.begin(); it != overlays.end(); ++it)
+    for (auto it = overlays.begin(); it != overlays.end(); ++it)
     {
       double pts2 = (*it)->bForced ? pts : pts - m_iSubtitleDelay;
       m_renderManager.AddOverlay(*it, pts2);
