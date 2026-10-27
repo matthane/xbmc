@@ -12,6 +12,7 @@
 #include "threads/CriticalSection.h"
 
 #include <memory>
+#include <optional>
 
 class CDVDInputStreamNavigator;
 class CDVDDemuxSPU;
@@ -35,7 +36,6 @@ public:
   */
   void ProcessAndAddOverlayIfValid(const std::shared_ptr<CDVDOverlay>& pPicture);
 
-  VecOverlays* GetOverlays(); // get the first overlay in this fifo
   bool ContainsOverlayType(DVDOverlayType type);
 
   void Clear(); // clear the fifo and delete all overlays
@@ -46,6 +46,11 @@ public:
   void Flush();
 
   void CleanUp(double pts); // validates all overlays against current pts
+  void GetOverlaysAt(double pts,
+                     double subtitleDelay,
+                     bool renderSubs,
+                     VecOverlays& overlays,
+                     std::optional<int> subtitleDepth = {}); // appends the overlays shown at pts
   size_t GetSize();
 
   void UpdateOverlayInfo(const std::shared_ptr<CDVDInputStreamNavigator>& pStream,

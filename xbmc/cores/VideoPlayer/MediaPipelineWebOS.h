@@ -141,6 +141,7 @@ public:
    * @param clock Reference to the clock for timing.
    * @param parent Parent message queue for control messages.
    * @param overlay Overlay container for subtitle rendering.
+   * @param menuOverlay Overlay container for Blu-ray menu pages.
    * @param hasAudio True if audio stream is present, false otherwise.
    */
   explicit CMediaPipelineWebOS(CProcessInfo& processInfo,
@@ -148,6 +149,7 @@ public:
                                CDVDClock& clock,
                                CDVDMessageQueue& parent,
                                CDVDOverlayContainer& overlay,
+                               CDVDOverlayContainer& menuOverlay,
                                bool hasAudio);
 
   /**
@@ -514,6 +516,7 @@ private:
   CRenderManager& m_renderManager;
   CDVDClock& m_clock;
   CDVDOverlayContainer& m_overlayContainer;
+  CDVDOverlayContainer& m_menuOverlayContainer;
   std::atomic<bool> m_hasAudio{true};
 
   std::mutex m_audioDeviceMutex;
